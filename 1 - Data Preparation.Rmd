@@ -2,7 +2,14 @@
 title: "Data Preparation Pipeline"
 author: "Erik Westlund"
 date: "2025-01-13"
-output: html_document
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    code_folding: show
+    html_document:
+      keep_md: true
 editor_options: 
   chunk_output_type: console
 ---
@@ -11,9 +18,11 @@ editor_options:
 knitr::opts_chunk$set(echo = TRUE)
 
 library(dplyr)
+library(DT)
 library(kableExtra)
 library(purrr)
 library(readr)
+library(readxl)
 library(rlang)
 library(stringr)
 library(tidyr)
@@ -22,42 +31,29 @@ library(tidyr)
 
 ```{r ingest_data, echo=FALSE, message=FALSE}
 
-raw_data <- readr::read_csv("data/FSCI_2024.csv")
+raw_data <- readRDS("data/FSCI_2024.rds")
+targets <- readxl::read_xlsx("data/Codebook Dec 2024.xlsx", sheet = "Indicators and Target Value")
+target_year <- 2030
+
+# Contains maps for renaming variables and indicators for this pipeline.
+# source("naming_maps.R")
+
+# Contains functions for data preparation
+source("functions.R")
 
 ```
 
-# Data Preparation {.tabset}
+# Data Preparation
 
-Our focus for now is the value variable, so for each variable, we need to check for mixed types in the value column. 
+Our focus for now is the value variable, so for each variable, we need to check for mixed types in the value column.  The below tables show the first five values for each variable.
 
-We find that only `righttofood` is char and only has data for a year or so. See the tab for a list of all data in that category.
+We find that `foodenviropolicies` and `righttofood` are the only char vars.
 
-## Type information 
+## Data Type Analysis Diagnostics
 
-```{r variable_cleanup, echo=FALSE}
+```{r variable_cleanup, echo=FALSE, results='asis'}
 data <- raw_data
 
-# We convert everything to char now because of mixed type issues. First, however, get information on which columsn have mixed types.
-
-classify_values_individually <- function(values, n = 5) {
-  unique_vals <- unique(values)
-  
-  # Determine numeric values
-  numeric_vals <- suppressWarnings(as.numeric(unique_vals))
-  numeric_examples <- unique_vals[!is.na(numeric_vals)]
-  
-  # Determine character values (everything else)
-  char_vals <- unique_vals[is.na(numeric_vals)]
-  
-  list(
-    numeric_examples = head(numeric_examples, n),
-    char_examples = head(char_vals, n),
-    numeric_full = numeric_examples,
-    char_full = char_vals
-  )
-}
-
-# Generate diagnostics
 diagnostics <- data |> 
   group_by(variable) |> 
   summarize(
@@ -80,255 +76,189 @@ diagnostics <- data |>
   ) |> 
   select(variable, ex1_num:ex5_char, full_numeric, full_char)
 
-# Print diagnostics
+cat("## Numeric Indicators\n\n")
+cat("### Indicators with non-missing numeric data\n\n")
+
+# Note: just check value 1; if it's NA, all are NA
+num_vars <- diagnostics |> 
+  filter(!is.na(ex1_num)) |>
+  pull(variable)
+
+num_vars |> kable()
+
+cat("### Samples of values\n\n")
+
 diagnostics |>
-  select(-full_numeric, -full_char) |> 
-  kable()
+  select(variable, ex1_num:ex5_num) |> kable()
 
+cat("## Character Indicators\n\n")
+cat("### Indicators with non-missing character data\n\n")
+
+char_vars <- diagnostics |> 
+  filter( !is.na(ex1_char)) |>
+  pull(variable)
+
+char_vars |> kable()
+
+cat("### Sample of Values\n\n")
+
+diagnostics |>
+  select(variable, ex1_char:ex5_char) |> kable()
+
+cat("## Logical Variables\n\n")
+
+cat("### Indicators with non-missing logical data\n\n")
+
+logical_vars <- diagnostics |> 
+  filter(ex1_num %in% c(0,1)) |>
+  filter(ex2_num %in% c(0,1)) |>
+  filter(is.na(ex3_num)) |> 
+  pull(variable)
+
+logical_vars |> kable()
+
+cat("### Sample of Values\n\n")
+
+diagnostics |>
+  filter(variable %in% logical_vars) |>
+  select(variable, ex1_num:ex5_num) |> kable()
+
+cat("## Mixed Variables\n\n")
+
+mixed_vars <- diagnostics |> 
+  filter(!is.na(ex1_num) & !is.na(ex1_char)) |>
+  pull(variable)
+
+mixed_vars |> kable()
+
+cat("### Sample of Values\n\n")
+
+diagnostics |>
+  filter(variable %in% mixed_vars) |>
+  select(variable, ex1_num:ex5_num, ex1_char:ex5_char) |> kable()
+
+## Char only vars
+char_only_vars <- char_vars |> setdiff(mixed_vars)
 
 ```
 
-## Right to food
+### Notes
 
-```{r right-to-food, echo=FALSE}
-# Filter out the variable 'righttofood'
-data |> 
-  filter(variable == "righttofood") |> 
-  select(country, year, value) |> 
-  filter(!is.na(value)) |>
-  kable()
-```
+`croplandchange` is mixed; has an empty string, but mostly numeric values. This should not affect results since numeric operations will coerce this to NA.
 
-# Data Cleaning
+## Dataframe Preparation
 
-We'll create a dataframe named `analysis_long_data` with:
+Create a dataframe named `analysis_long_data` with:
 
-* Consistently named columns (i.e., lowercase, snake case between words, units/metrics as suffixes)
-* Consistently named variables in the `variable` column (same rules as above)
-* Non-numeric variables removed (i.e., `righttofood`)
+* Renamed columns for ease of debugging (lowercase, snake case between words, units/metrics as suffixes)
+* Renamed `variable` column for ease of debugging (same rules as above)
+* Non-numeric variables removed (i.e., `righttofood`, `foodenviropolicies`)
+
+Note: upon finishing this process, renaming can be removed with little work. Alternatively, renaming can be kept and reversed. The results would be the same.
 
 ```{r data_cleaning, echo=FALSE}
-# Data frame column names
-column_names <- c(
-  "country" = "country",
-  "M49_code" = "m49_code",
-  "ISO3" = "iso3",
-  "indicator" = "indicator",
-  "year" = "year",
-  "value" = "value",
-  "unit" = "unit",
-  "variable" = "variable",
-  "short_label" = "short_label",
-  "indicator_order" = "indicator_order",
-  "variable_order" = "variable_order",
-  "theme" = "theme",
-  "domain" = "domain",
-  "mean_weighting" = "mean_weighting",
-  "desirable_direction" = "desirable_direction",
-  "member_state" = "member_state",
-  "income_group" = "income_group",
-  "FSCI_region" = "fsci_region",
-  "UN Continental Region" = "un_continental_region",
-  "country_order" = "country_order",
-  "GDP" = "gdp",
-  "totalpop" = "total_population",
-  "landarea" = "land_area",
-  "cropland" = "cropland",
-  "pop_u" = "urban_population",
-  "PPP" = "ppp",
-  "animals_beef" = "animals_beef",
-  "animals_cowmilk" = "animals_cowmilk",
-  "areaharvested_cereals" = "area_harvested_cereals",
-  "areaharvested_fruit" = "area_harvested_fruit",
-  "areaharvested_veg" = "area_harvested_vegetables",
-  "production_beef" = "production_beef",
-  "production_cerealsexclrice" = "production_cereals_excl_rice",
-  "production_cowmilk" = "production_cowmilk",
-  "production_rice" = "production_rice",
-  "agland" = "agricultural_land",
-  "agland_ESA" = "agricultural_land_esa",
-  "agland_minspecies" = "agricultural_land_min_species",
-  "weight" = "weight",
-  "globalmean" = "global_mean",
-  "regionmean" = "region_mean",
-  "incomegrpmean" = "income_group_mean"
-)
-
-# Variable names
-variable_names <- c(
-  cohd = "cost_of_healthy_diet",
-  avail_fruits = "availability_fruit",
-  avail_veg = "availability_vegetable",
-  UPFretailval_percap = "ultraprocessed_food_sales_per_capita",
-  safeh20 = "safe_water",
-  fies_modsev = "food_insecurity",
-  pctcantafford = "cannot_afford_healthy_diet_pct",
-  pou = "undernourishment_prevalence",
-  All5 = "all_five_food_groups",
-  MDD_iycf = "minimum_diet_diversity_child",
-  MDD_W = "minimum_diet_diversity_women",
-  NCD_P = "non_communicable_diseases_protect",
-  NCD_R = "non_communicable_diseases_risk",
-  SoftDrinks = "soft_drinks",
-  zeroFV = "zero_fruits_vegetables_adult",
-  zeroFV_iycf = "zero_fruits_vegetables_child",
-  `emint_beef\r\n` = "emissions_intensity_beef",
-  `emint_cerealsnorice\r\n` = "emissions_intensity_cereals_no_rice",
-  emint_cowmilk = "emissions_intensity_cow_milk",
-  emint_rice = "emissions_intensity_rice",
-  fs_emissions = "food_systems_emissions",
-  yield_beef = "yield_beef",
-  yield_cereals = "yield_cereals",
-  yield_fruit = "yield_fruits",
-  yield_cowmilk = "yield_cow_milk",
-  yield_vegetables = "yield_vegetables",
-  croplandchange = "cropland_change",
-  agwaterdraw = "agricultural_water_withdrawal",
-  fishhealth = "fisheries_health_index",
-  functionalintegrity = "functional_integrity",
-  pesticides = "pesticide_use",
-  NO2_efficiency = "no2_efficiency",
-  aginGDP = "agriculture_share_gdp",
-  underemp_r = "underemployment_rural",
-  unemp_r = "unemployment_rural",
-  spadequacy = "social_protection_adequacy",
-  spcoverage = "social_protection_coverage",
-  childlabor = "child_labor",
-  landholding_fem = "landholdings_female",
-  cspart = "civil_society_participation",
-  fspathway = "food_system_pathway",
-  mufppurbshare = "mufpp_urban_share",
-  righttofood = "right_to_food",
-  foodsafety = "food_safety_capacity",
-  govteffect = "govt_effectiveness_index",
-  foodenviropolicies = "healthy_food_environment_policies",
-  accessinfo = "access_to_information",
-  accountability = "govt_accountability_index",
-  open_budget_index = "open_budget_index",
-  damages_gdp = "disaster_damages_gdp",
-  genres_plant = "conservation_genetic_resources_plant",
-  genres_animal = "conservation_genetic_resources_animal",
-  pctagland_minspecies = "minimum_species_diversity",
-  kcal_total = "kcal_total", # Dietary sourcing flexibility
-  mobile = "mobile_phone_per_100_people",
-  soccapindex = "social_capital_index",
-  rcsi_prevalence = "reduced_coping_strategies_prevalence",
-  foodsupplyvar = "food_supply_variability",
-  fpi_cv = "food_price_volatiliity_index",
-)
-
 
 analysis_long_data <- data |> 
-  filter(variable != "righttofood") |> 
-  rename_with(~ recode(.x, !!!column_names)) |> 
-  mutate(variable = recode(variable, !!!variable_names))
+  filter(!variable %in% c("righttofood", "foodenviropolicies")) |> 
+  mutate(
+    variable = clean_analysis_data_variables(variable),
+  ) |> 
+  mutate( # Utility variables to make it easier to work with columns with spaces
+    fsci_region = FSCI_region,
+    un_contentinal_region = `UN Continental Region`,
+    milestone_pctile = if_else(desirable_direction == -1, 0.2, 0.8)
+  )
+
+regions <- get_regions(analysis_long_data)
+income_groups <- get_income_groups(analysis_long_data)
+
+target_data <- targets |> 
+  rename(
+    variable = `Variable name`,
+    indicator = `Indicator`,
+    unit = `Unit`,
+    thematic_grouping = `Thematic Grouping`,
+    has_target = `Target (yes/no)`,
+    target = `Target Global (value)`,
+  ) |> 
+  mutate(
+    has_target = if_else(has_target == "Yes", TRUE, FALSE)
+  )
+
 ```
 
-# Extracting Data for Each Variable and Calculate Milestones
 
-```{r extract_data_and_milestones, echo=FALSE}
+
+# Process Data & Calculate Metrics
+
+```{r extract_data_and_milestones, echo=FALSE, results='asis'}
+
 # Initialize a list to store data for each variable
-var_data <- list()
+metrics_data <- tibble()
+failing_variables <- c()
+warning_variables <- c()
 
-# Function to extract and clean data for a specific variable
-extract_variable_data <- function(analysis_long_data, variable_name) {
-  analysis_long_data %>%
-    filter(variable == variable_name)
-}
+indicator_variables <- get_indicator_variables(analysis_long_data, exclude = c("righttofood", "foodenviropolicies"))
 
-# Get test data for safe water variable
-test_data <- extract_variable_data(analysis_long_data, "safe_water")
-
-
-# Function to calculate global milestones; this is per-year
-calculate_global_milestones <- function(data, variable_col = "variable", year_col = "year", value_col = "value") {
-  data %>%
-    mutate(
-      !!value_col := parse_number(!!sym(value_col)) # Convert value to numeric
-    ) %>%
-    filter(!is.na(!!sym(value_col))) %>% # Remove rows where value could not be converted
-    group_by(!!sym(variable_col), !!sym(year_col)) %>%
-    summarize(
-      milestone = quantile(!!sym(value_col), 0.8, na.rm = TRUE), # Calculate milestone
-      .groups = "drop"
-    ) %>%
-    rename(variable = !!sym(variable_col), year = !!sym(year_col))
-}
-
-yearly_global_milestones <- calculate_global_milestones(test_data)
-
-yearly_global_milestones |> head()
-
-calculate_distance_and_progress <- function(data, milestone_data, 
-                                            variable_col = "variable", 
-                                            year_col = "year", 
-                                            value_col = "value", 
-                                            country_col = "country") {
-  # Ensure milestone_data has proper names
-  milestone_data <- milestone_data %>%
-    rename(milestone_year = !!sym(year_col), milestone_value = milestone) %>%
-    select(!!sym(variable_col), milestone_year, milestone_value)
+for(indicator_variable in indicator_variables) {
   
-  # Perform the join
-  data_with_milestone <- data %>%
-    left_join(
-      milestone_data,
-      by = setNames(c("milestone_year", "variable"), c(year_col, variable_col))
-    )
+  # Initialize in the event of an error
+  indicator_metrics <- tibble()
   
-  # Convert value to numeric, calculate distances and progress
-  data_with_metrics <- data_with_milestone %>%
-    mutate(
-      !!value_col := parse_number(!!sym(value_col)), # Convert to numeric
-      distance_to_milestone = !!sym(value_col) - milestone_value,
-      progress_to_milestone = !!sym(value_col) / milestone_value
-    ) %>%
-    select(
-      !!sym(country_col),
-      !!sym(year_col),
-      !!sym(variable_col),
-      value = !!sym(value_col),
-      milestone_value,
-      distance_to_milestone,
-      progress_to_milestone
-    )
+  short_label <- target_data |> 
+    filter(variable == indicator_variable) |> 
+    pull(indicator)
   
-  return(data_with_metrics)
+  cat(paste0("Processing `", indicator_variable ,"`: ", short_label, " ...\n"))
+  tryCatch(
+    {
+      indicator_data <- extract_indicator_data(analysis_long_data, indicator_variable)
+      target_value <- get_target_value(indicator_variable, target_data)
+      indicator_milestone_metrics <- calculate_milestone_metrics(indicator_data) # All years for milestones
+      indicator_distance_metrics <- calculate_distance_metrics(indicator_data, indicator_milestone_metrics, target_value)
+      indicator_velocity_metrics <- calculate_velocity_metrics(indicator_data, indicator_milestone_metrics, target_value, target_year)
+      
+      indicator_metrics <- indicator_milestone_metrics |> 
+        mutate(
+          target_value = target_value
+        ) |> 
+        inner_join(indicator_distance_metrics, by = c("variable", "country", c("year" = "latest_year"))) |>  # Narrows to 2022 
+        rename(
+          latest_year = year,
+          latest_year_value = value,
+        ) |> 
+        select(variable, country, latest_year,  latest_year_value, everything()) |> # Rearrange
+        inner_join(indicator_velocity_metrics |> select(-milestone_global, -milestone_region, -milestone_income_group), by = c("variable", "country", "latest_year")) 
+      
+      cat(paste0("✅ Sucessfully processed.\n\n"))
+    },
+    warning = function(w) {
+      warning_variables <- c(warning_variables, indicator_variable)
+      cat(paste0("⚠️ Warning processing ", indicator_variable, ": ", w$message, "\n\n"))
+    },
+    error = function(e) {
+      failing_variables <- c(failing_variables, indicator_variable)
+      cat(paste0("💣 Error processing ", indicator_variable, ": ", e$message, "\n\n"))
+    }
+  )
+  
+  metrics_data <- bind_rows(metrics_data, indicator_metrics)
 }
+```
 
-country_year_metric_data <- calculate_distance_and_progress(test_data, yearly_global_milestones)
-country_year_metric_data |> head()
+# Milestone, Distance, and Velocity Metrics
 
-calculate_growth_rates <- function(data, 
-                                   variable_col = "variable", 
-                                   year_col = "year", 
-                                   value_col = "value", 
-                                   country_col = "country") {
-  data %>%
-    filter(!is.na(!!sym(value_col))) %>% # Remove rows with NA values
-    group_by(!!sym(country_col), !!sym(variable_col)) %>% # Group by country and variable
-    arrange(!!sym(year_col)) %>% # Ensure data is ordered by year
-    summarize(
-      start_year = first(!!sym(year_col)),
-      end_year = last(!!sym(year_col)),
-      start_value = first(!!sym(value_col)),
-      end_value = last(!!sym(value_col)),
-      years = end_year - start_year,
-      cagr = ifelse(
-        years > 0,
-        (end_value / start_value)^(1 / years) - 1,
-        NA_real_
-      ),
-      linear_growth_rate = ifelse(
-        years > 0,
-        (end_value - start_value) / years,
-        NA_real_
-      ),
-      .groups = "drop"
+```{r milestones_and_growth_rates, results='asis', echo=FALSE}
+
+  DT::datatable(metrics_data, 
+    options = list(
+      pageLength = 30,
+      scrollX = TRUE
     )
-}
+  )
 
-growth_rates <- calculate_growth_rates(test_data)
-growth_rates |> head()
+readr::write_csv(metrics_data, "data/metrics_data.csv")
+
+
 
 ```
