@@ -31,8 +31,8 @@ library(tidyr)
 
 ```{r ingest_data, echo=FALSE, message=FALSE}
 
-raw_data <- readRDS("data/FSCI_2024.rds")
-targets <- readxl::read_xlsx("data/Codebook Dec 2024.xlsx", sheet = "Indicators and Target Value")
+raw_analysis_data <- readRDS("data/FSCI_2024.rds")
+raw_target_data <- readxl::read_xlsx("data/Codebook Dec 2024.xlsx", sheet = "Indicators and Target Value")
 target_year <- 2030
 
 # Contains functions for data preparation
@@ -43,7 +43,7 @@ source("functions.R")
 # Countries
 
 ```{r country_summary, echo=FALSE, message=FALSE}
-country_indicator_summary <- get_country_indicator_summary(raw_data)
+country_indicator_summary <- get_country_indicator_summary(raw_analysis_data)
 ```
 
 ## Summary
@@ -72,7 +72,7 @@ DT::datatable(country_indicator_summary, rownames = FALSE, options = list(pageLe
 ## Summary
 
 ```{r region_summary, echo=FALSE, message=FALSE}
-region_summary <- get_region_summary(raw_data)
+region_summary <- get_region_summary(raw_analysis_data)
 
 region_summary |> kable()
 ```
@@ -82,14 +82,14 @@ region_summary |> kable()
 ## Summary
 
 ```{r income_group_summary, echo=FALSE, message=FALSE}
-income_group_summary <- get_income_group_summary(raw_data)
+income_group_summary <- get_income_group_summary(raw_analysis_data)
 income_group_summary |> kable()
 ```
 
 # Indicators
 
 ```{r indicator_summary, echo=FALSE, message=FALSE}
-indicator_summary <- get_indicator_summary(raw_data)
+indicator_summary <- get_indicator_summary(raw_analysis_data)
 ```
 
 ## Summary
@@ -114,3 +114,18 @@ indicator_summary |>
 DT::datatable(indicator_summary, rownames = FALSE, options = list(pageLength = 60, scrollX = TRUE))
 
 ```
+
+# Metrics
+
+```{r calculate_metrics}
+
+metrics_data <- get_metrics_data(raw_analysis_data, indicator_summary, raw_target_data, target_year)
+
+```
+
+  
+  <!-- combined_data <- map_dfr( -->
+  <!--   indicator_metrics_list, -->
+  <!--   ~ .x$data, -->
+  <!--   .id = "variable"  -->
+  <!-- ) -->

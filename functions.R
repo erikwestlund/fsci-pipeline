@@ -1,14 +1,31 @@
-get_regions <- function(data) {
-  data |> pull(`UN Continental Region`) |> as.character() |> sort() |> unique()
+
+get_un_regions <- function(data) {
+  region_col <- if_else("un_continental_region" %in% names(data), "un_continental_region", "UN Continental Region")
+  data |> pull(!!sym(region_col)) |> as.character() |> sort() |> unique()
 }
 
 get_income_groups <- function(data) {
-  data |> filter(
+  groups <- data |> filter(
     !is.na(income_group)
   ) |> 
-    pull("income_group") |>
-    as.character() |> 
+    select("income_group") |>
+    mutate(
+      income_group = as.character(income_group)
+    ) |> 
     unique()
+  
+  prefix_order <- c("Low", "Lower", "Upper", "High")
+  
+  groups |> 
+    mutate(
+      prefix_rank = match(
+        sub(" .*", "", income_group), 
+        prefix_order
+      )
+    ) |> 
+    arrange(prefix_rank) |> 
+    select(-prefix_rank) |> 
+    pull(income_group)
 }
 
 get_indicator_variables <- function(data, exclude = c()) {
@@ -20,6 +37,24 @@ get_indicator_variables <- function(data, exclude = c()) {
     as.character() |>
     sort() |>
     unique()
+}
+
+get_target_data <- function(raw_data) {
+  target_data <- raw_data |> 
+    rename(
+      variable = `Variable name`,
+      indicator = `Indicator`,
+      unit = `Unit`,
+      thematic_grouping = `Thematic Grouping`,
+      has_target = `Target (yes/no)`,
+      target = `Target Global (value)`,
+    ) |> 
+    mutate(
+      has_target = if_else(has_target == "Yes", TRUE, FALSE)
+    ) |> 
+    select(
+      variable, has_target, target
+    )
 }
 
 get_country_indicator_summary <- function(data) {
@@ -134,14 +169,14 @@ get_indicator_summary <- function(data) {
     summarise(
       years_of_data = n_distinct(year), # Number of years with data
       first_year = min(year), # First year with data
-      first_year_countries = country_count[year == min(year)], # Countries in the first year
+      first_year_reporting_countries = country_count[year == min(year)], # Countries in the first year
       latest_year = max(year), # Latest year with data
-      latest_year_countries = country_count[year == max(year)], # Countries in the latest year
+      latest_year_reporting_countries = country_count[year == max(year)], # Countries in the latest year
       lowest_reporting_year = year[which.min(country_count)], # Year with the smallest count
-      lowest_year_countries = min(country_count), # Smallest count
+      lowest_year_reporting_countries = min(country_count), # Smallest count
       highest_reporting_year = year[which.max(country_count)], # Year with the largest count
-      highest_year_countries = max(country_count), # Largest count
-      avg_reporting_year = round(mean(country_count), 1), # Average reporting countries
+      highest_year_reporting_countries = max(country_count), # Largest count
+      avg_countries_reporting_per_year = round(mean(country_count), 1), # Average reporting countries
       .groups = "drop"
     )
   
@@ -169,6 +204,115 @@ determine_data_type <- function(values) {
   return("character")
 }
 
+get_metrics_data <- function(
+  raw_data,
+  indicator_summary,
+  raw_target_data,
+  target_year = 2030
+) {
+  analysis_data <- get_analysis_data(raw_data)
+  regions <- get_un_regions(analysis_data)
+  income_groups <- get_income_groups(analysis_data)
+  target_data <- get_target_data(raw_target_data)
+  indicator_variables <- get_indicator_variables(analysis_data)
+  
+  map(
+    indicator_variables, 
+    ~ get_indicator_variable_metrics(analysis_data, indicator_summary, target_data, .x, target_year)
+  ) |> 
+    set_names(indicator_variables)
+}
+
+# Returns a list of `data` and `meta`
+get_indicator_variable_metrics <- function(analysis_data, indicator_summary, target_data, indicator_variable, target_year) {
+  indicator_variable_metrics <- tibble()
+  failing_variables <- list()
+  warning_variables <- list()
+  
+  # if indicator_summary$data_type for this variable is not numeric, return list with info
+  data_type <- indicator_summary |> filter(variable == indicator_variable) |> pull(data_type)
+  
+  if(length(data_type) == 0 || data_type != "numeric") {
+    message <- paste0("Skipped: indicator variable ", indicator_variable, " is not numeric.")
+  } else{
+    tryCatch(
+      {
+        indicator_data <- extract_indicator_data(analysis_data, indicator_variable)
+        target_value <- get_target_value(indicator_variable, target_data)
+        indicator_milestone_metrics <- calculate_milestone_metrics(indicator_data) # All years for milestones
+        indicator_distance_metrics <- calculate_distance_metrics(indicator_data, indicator_milestone_metrics, target_value)
+        indicator_velocity_metrics <- calculate_velocity_metrics(indicator_data, indicator_milestone_metrics, target_value, target_year)
+        
+        indicator_metrics_countries_with_data <- indicator_milestone_metrics |> 
+          mutate(
+            target_value = target_value
+          ) |> 
+          inner_join(indicator_distance_metrics, by = c("variable", "country", c("year" = "latest_year"))) |>  # Narrows to latest year 
+          rename(
+            latest_year = year,
+            latest_year_value = value,
+          ) |> 
+          select(variable, country, latest_year,  latest_year_value, everything()) |> # Rearrange
+          inner_join(indicator_velocity_metrics |> select(-milestone_global, -milestone_region, -milestone_income_group), by = c("variable", "country", "latest_year")) |> 
+          arrange(country)
+        
+        # Fill in empty countries
+        countries_without_data <- analysis_data |> 
+          filter(variable == indicator_variable) |> 
+          select(country) |> 
+          anti_join(indicator_metrics_countries_with_data, by = "country") |> 
+          mutate(
+            variable = indicator_variable,
+          ) |>
+          unique() |> 
+          arrange(country)
+        
+        indicator_variable_metrics <- indicator_metrics_countries_with_data |> 
+          bind_rows(countries_without_data) |> 
+          arrange(country)
+        message <- "Indicator variable successfully processed."
+      },
+      warning = function(w) {
+        warning_variables <- c(warning_variables, indicator_variable)
+        cat(paste0("⚠️ Warning processing ", indicator_variable, ": ", w$message, "\n\n"))
+        message <- "Indicator variable processed with warnings."
+      },
+      error = function(e) {
+        failing_variables <- c(failing_variables, indicator_variable)
+        cat(paste0("💣 Error processing ", indicator_variable, ": ", e$message, "\n\n"))
+        message <- "Failed to process indicator variable."
+      }
+    )  
+  }
+  
+  list(
+    variable = indicator_variable,
+    message = message,
+    data = indicator_variable_metrics,
+    meta = list(
+      data_type = data_type,
+      variable = indicator_variable,
+      failing = length(failing_variables) > 0,
+      warnings = length(warning_variables) > 0,
+      failing_variables = failing_variables,
+      warning_variables = warning_variables
+    )
+  )
+}
+
+get_analysis_data <- function(raw_data) {
+  raw_data |> 
+    mutate(
+      variable = clean_analysis_data_variables(variable), # Cleans up a handful of minor issues from raw data
+      un_continental_region = `UN Continental Region`,
+      milestone_pctile = if_else(desirable_direction == -1, 0.2, 0.8)
+    ) |> 
+    select(
+      country, variable, indicator, short_label, year, value, un_continental_region, income_group, desirable_direction, milestone_pctile
+    )
+}
+
+
 clean_analysis_data_variables <- function(variables) {
   # we do some minimal cleaning here, namely, removing \r\n from any variable names
   variables |> stringr::str_replace_all("\r\n$", "")
@@ -195,8 +339,8 @@ classify_values_individually <- function(values, n = 5) {
 }
 
 # Extract a specific indicator variable from the analysis data.
-extract_indicator_data <- function(analysis_long_data, variable_name, value_col = "value") {
-  analysis_long_data |>
+extract_indicator_data <- function(analysis_data, variable_name, value_col = "value") {
+  analysis_data |>
     filter(variable == variable_name) |> 
     mutate(
       value = readr::parse_number(!!sym(value_col)),
@@ -228,7 +372,7 @@ extract_target_data <- function(indicator_variable) {
 # into a single function.
 calculate_milestone_metrics <- function(
     indicator_data,
-    regions_col = "UN Continental Region",
+    regions_col = "un_continental_region",
     income_groups_col = "income_group",
     variable_col = "variable",
     year_col = "year",
