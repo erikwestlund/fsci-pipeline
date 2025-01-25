@@ -11,7 +11,7 @@ The pipeline comprises a series of RMarkdown notebooks which process the data an
     * `output/metrics_data.rds`
     * `output/metrics_combined_dataframe.rds`
     
-  The first file contains the data for each metric along with meta-data, while the second file contains the metrics for all indicators in a single R data frame.
+    The first file contains the data for each metric along with meta-data, while the second file contains the metrics for all indicators in a single R data frame.
 
 
 ## Data Patches
