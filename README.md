@@ -6,8 +6,12 @@ The pipeline comprises a series of RMarkdown notebooks which process the data an
 
 ## Steps
 
-`1 - Data Preparation.Rmd`: This notebook reads in the raw data and prepares it for analysis. It saves the cleaned data to the `output` directory.
+`1 - Data Preparation.Rmd`: This notebook reads in the raw data, prepares it for analysis, generates a report on the data, and saves the output to the output directory. Two files are saved: `output/metrics_data.rds` and `output/metrics_combined_dataframe.rds`. The first file contains the data for each metric along with meta-data, while the second file contains the metrics for all indicators in a single R data frame.
 
+
+## Data Patches
+
+To handle the small number of inconsistencies in the data (e.g., missing values, incorrect data types), the `data_patches.R` file contains a function that returns conditions for when to patch data. The `extract_indicator_data` function applies these patches to the data.
 
 ## Data Sources
 

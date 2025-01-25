@@ -208,7 +208,8 @@ get_metrics_data <- function(
   raw_data,
   indicator_summary,
   raw_target_data,
-  target_year = 2030
+  target_year = 2030,
+  data_patches = list()
 ) {
   analysis_data <- get_analysis_data(raw_data)
   regions <- get_un_regions(analysis_data)
@@ -218,26 +219,28 @@ get_metrics_data <- function(
   
   map(
     indicator_variables, 
-    ~ get_indicator_variable_metrics(analysis_data, indicator_summary, target_data, .x, target_year)
+    ~ get_indicator_variable_metrics(analysis_data, indicator_summary, target_data, .x, target_year, data_patches)
   ) |> 
     set_names(indicator_variables)
 }
 
 # Returns a list of `data` and `meta`
-get_indicator_variable_metrics <- function(analysis_data, indicator_summary, target_data, indicator_variable, target_year) {
+get_indicator_variable_metrics <- function(analysis_data, indicator_summary, target_data, indicator_variable, target_year, data_patches) {
   indicator_variable_metrics <- tibble()
   failing_variables <- list()
   warning_variables <- list()
   
   # if indicator_summary$data_type for this variable is not numeric, return list with info
   data_type <- indicator_summary |> filter(variable == indicator_variable) |> pull(data_type)
+  indicator_label <- analysis_data |> filter(variable == indicator_variable) |> pull(indicator) |> unique() |> as.character()
+  indicator_short_label <- analysis_data |> filter(variable == indicator_variable) |> pull(short_label) |> unique() |> as.character()
   
   if(length(data_type) == 0 || data_type != "numeric") {
     message <- paste0("Skipped: indicator variable ", indicator_variable, " is not numeric.")
   } else{
     tryCatch(
       {
-        indicator_data <- extract_indicator_data(analysis_data, indicator_variable)
+        indicator_data <- extract_indicator_data(analysis_data, indicator_variable, data_patches = data_patches)
         target_value <- get_target_value(indicator_variable, target_data)
         indicator_milestone_metrics <- calculate_milestone_metrics(indicator_data) # All years for milestones
         indicator_distance_metrics <- calculate_distance_metrics(indicator_data, indicator_milestone_metrics, target_value)
@@ -287,6 +290,8 @@ get_indicator_variable_metrics <- function(analysis_data, indicator_summary, tar
   
   list(
     variable = indicator_variable,
+    indicator = indicator_label,
+    short_label = indicator_short_label,
     message = message,
     data = indicator_variable_metrics,
     meta = list(
@@ -312,40 +317,55 @@ get_analysis_data <- function(raw_data) {
     )
 }
 
-
 clean_analysis_data_variables <- function(variables) {
   # we do some minimal cleaning here, namely, removing \r\n from any variable names
   variables |> stringr::str_replace_all("\r\n$", "")
 }
 
-# Classify values in a vector as numeric or character. Used for data type analysis.
-classify_values_individually <- function(values, n = 5) {
-  unique_vals <- unique(values)
-  
-  # Filter NA
-  unique_vals <- unique_vals[!is.na(unique_vals)]
-  
-  numeric_vals <- suppressWarnings(as.numeric(unique_vals))
-  numeric_examples <- unique_vals[!is.na(numeric_vals)] |> sort()
-  
-  char_vals <- unique_vals[is.na(numeric_vals)] |> sort()
-  
-  list(
-    numeric_examples = head(numeric_examples, n),
-    char_examples = head(char_vals, n),
-    numeric_full = numeric_examples,
-    char_full = char_vals
-  )
-}
-
 # Extract a specific indicator variable from the analysis data.
-extract_indicator_data <- function(analysis_data, variable_name, value_col = "value") {
-  analysis_data |>
-    filter(variable == variable_name) |> 
+extract_indicator_data <- function(analysis_data, indicator_variable, value_col = "value", data_patches = list()) {
+  indicator_data <- analysis_data |>
+    filter(variable == indicator_variable)
+  
+  # Apply patches
+  for (patch in data_patches) {
+    # Remove action
+    if (patch$action == "remove") {
+      indicator_data <- indicator_data |>
+        filter(
+          !(
+            variable == patch$indicator_variable &
+              country == patch$country &
+              year == patch$year &
+              value == patch$value
+          )
+        )
+    }
+    
+    # Set NA
+    if (patch$action == "set_na") {
+      indicator_data <- indicator_data |> 
+        mutate(
+          value = case_when(
+            variable == patch$indicator_variable & 
+              country == patch$country & 
+              year == patch$year & 
+              value == patch$value ~ NA_character_, # Explicitly use NA_character_ for compatibility
+            TRUE ~ as.character(value) # Ensure value is treated as character
+          )
+        )
+    }
+  }
+  
+  indicator_data |> 
     mutate(
       value = readr::parse_number(!!sym(value_col)),
       year = as.integer(year)
-    )
+    ) |> 
+    unique()  # Remove duplicates. We only remove duplicate rows so no information is lost when calculating metrics.
+  
+  
+  
 }
 
 get_target_value <- function(indicator_variable, target_data) {
@@ -422,7 +442,8 @@ calculate_milestones <- function(
       milestone = quantile(!!sym(value_col), milestone_pctile, na.rm = TRUE, type = 2) # Calculate using correct milestone given desirability direction
     ) |> 
     ungroup() |> 
-    rename(variable = !!sym(variable_col), year = !!sym(year_col))
+    rename(variable = !!sym(variable_col), year = !!sym(year_col)) |> 
+    unique()  # Remove duplicates. We only remove duplicate rows so no information is lost when calculating metrics.
 }
 
 calculate_distance_metrics <- function(
@@ -499,7 +520,8 @@ get_recent_data_values <- function(
         (!!sym(value_col))[!!sym(year_col) %in% (!!sym(year_col))[!!sym(year_col) >= max(!!sym(year_col), na.rm = TRUE) - 2]],
         na.rm = TRUE
       )
-    )
+    ) |> 
+    unique()   # Remove duplicates. We only remove duplicate rows so no information is lost when calculating metrics.
 }
 
 calculate_growth_required_metrics <- function(
@@ -665,4 +687,11 @@ calculate_growth_rates <- function(milestone_data,
       ),
       .groups = "drop"
     )
+}
+
+summarize_metrics_collection <- function(indicator_variable_metrics) {
+  tribble(
+    ~variable, ~data_type, ~indicator, ~short_label,
+    indicator_variable_metrics$variable, indicator_variable_metrics$meta$data_type, indicator_variable_metrics$indicator, indicator_variable_metrics$short_label
+  )
 }

@@ -37,6 +37,10 @@ target_year <- 2030
 
 # Contains functions for data preparation
 source("functions.R")
+source("data_patches.R")
+
+# Stored in data_patches.R
+data_patches <- get_data_patches()
 
 ```
 
@@ -117,15 +121,40 @@ DT::datatable(indicator_summary, rownames = FALSE, options = list(pageLength = 6
 
 # Metrics
 
-```{r calculate_metrics}
+```{r calculate_metrics, echo=FALSE, message=FALSE, results='asis'}
 
-metrics_data <- get_metrics_data(raw_analysis_data, indicator_summary, raw_target_data, target_year)
+metrics_data <- get_metrics_data(raw_analysis_data, indicator_summary, raw_target_data, target_year, data_patches)
+# metrics_data <- readRDS("output/metrics_data.rds")
+
+# Debug:
+# indicator_variable_metrics <- metrics_data[[1]]
+for(indicator_variable_metrics in metrics_data) {
+  cat(paste0("## ", indicator_variable_metrics$variable, ": ", indicator_variable_metrics$short_label , "\n\n"))
+  
+  cat("\n\n")
+  table <- summarize_metrics_collection(indicator_variable_metrics) |> kable()
+  print(table) # Ensure the table is rendered in the output
+  
+}
 
 ```
 
-  
-  <!-- combined_data <- map_dfr( -->
-  <!--   indicator_metrics_list, -->
-  <!--   ~ .x$data, -->
-  <!--   .id = "variable"  -->
-  <!-- ) -->
+# Save Output
+
+Two files have been saved to the `output` folder:
+
+* `metrics_data.rds` contains a list of lists, where each list contains a dataframe of the metrics for each indicator as well as meta-data.
+* `metrics_combined_dataframe.rds` contains a data frame of all the metrics for each indicator combined into a single data frame.
+
+```{r save_output, echo=FALSE}       
+
+combined_data <- map_dfr(
+  metrics_data,
+  ~ .x$data,
+  .id = "variable"
+)
+
+saveRDS(metrics_data, "output/metrics_data.rds")
+saveRDS(combined_data, "output/metrics_combined_dataframe.rds")
+
+```
