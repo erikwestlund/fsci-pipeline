@@ -1,9 +1,16 @@
-
-get_un_regions <- function(data) {
-  region_col <- if_else("un_continental_region" %in% names(data), "un_continental_region", "UN Continental Region")
-  data |> pull(!!sym(region_col)) |> as.character() |> sort() |> unique()
-}
-
+#' get_income_groups
+#'
+#' @description Extracts and returns a sorted, unique list of income groups from the provided dataset.
+#' The sorting is based on a predefined prefix order: "Low", "Lower", "Upper", "High".
+#'
+#' @param data A data frame containing a column named `income_group`.
+#'   This column should include income group classifications as character strings.
+#'
+#' @return A character vector of sorted, unique income group names, ordered by the predefined prefix order.
+#'
+#' @examples
+#' # Get unique income groups
+#' get_income_groups(example_data)
 get_income_groups <- function(data) {
   groups <- data |> filter(
     !is.na(income_group)
@@ -27,6 +34,26 @@ get_income_groups <- function(data) {
     select(-prefix_rank) |> 
     pull(income_group)
 }
+
+#' get_un_regions
+#'
+#' @description Extracts and returns a sorted, unique list of UN continental regions from the provided dataset. 
+#' The function dynamically determines the column name for the region based on the dataset's column names.
+#'
+#' @param data A data frame containing a column for UN continental regions. 
+#'   The column can be named either `un_continental_region` or `UN Continental Region`.
+#'
+#' @return A character vector of sorted, unique UN continental region names from the specified column.
+#'
+#' @examples
+#' # Get unique UN regions
+#' get_un_regions(example_data)
+get_un_regions <- function(data) {
+  region_col <- if_else("un_continental_region" %in% names(data), "un_continental_region", "UN Continental Region")
+  data |> pull(!!sym(region_col)) |> as.character() |> sort() |> unique()
+}
+
+
 
 get_indicator_variables <- function(data, exclude = c()) {
   data |>
