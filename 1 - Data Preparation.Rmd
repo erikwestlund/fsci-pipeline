@@ -35,230 +35,82 @@ raw_data <- readRDS("data/FSCI_2024.rds")
 targets <- readxl::read_xlsx("data/Codebook Dec 2024.xlsx", sheet = "Indicators and Target Value")
 target_year <- 2030
 
-# Contains maps for renaming variables and indicators for this pipeline.
-# source("naming_maps.R")
-
 # Contains functions for data preparation
 source("functions.R")
 
 ```
 
-# Data Preparation
+# Countries
 
-Our focus for now is the value variable, so for each variable, we need to check for mixed types in the value column.  The below tables show the first five values for each variable.
+```{r country_summary, echo=FALSE, message=FALSE}
+country_indicator_summary <- get_country_indicator_summary(raw_data)
+```
 
-We find that `foodenviropolicies` and `righttofood` are the only char vars.
+## Summary
 
-## Data Type Analysis Diagnostics
-
-```{r variable_cleanup, echo=FALSE, results='asis'}
-data <- raw_data
-
-diagnostics <- data |> 
-  group_by(variable) |> 
+```{r country_counts, echo=FALSE, message=FALSE}
+country_indicator_summary |> 
   summarize(
-    classification = list(classify_values_individually(value)),
-    .groups = "drop"
-  ) |> 
-  mutate(
-    ex1_num = map_chr(classification, ~ as.character(.x$numeric_examples[1] %||% NA)),
-    ex2_num = map_chr(classification, ~ as.character(.x$numeric_examples[2] %||% NA)),
-    ex3_num = map_chr(classification, ~ as.character(.x$numeric_examples[3] %||% NA)),
-    ex4_num = map_chr(classification, ~ as.character(.x$numeric_examples[4] %||% NA)),
-    ex5_num = map_chr(classification, ~ as.character(.x$numeric_examples[5] %||% NA)),
-    ex1_char = map_chr(classification, ~ as.character(.x$char_examples[1] %||% NA)),
-    ex2_char = map_chr(classification, ~ as.character(.x$char_examples[2] %||% NA)),
-    ex3_char = map_chr(classification, ~ as.character(.x$char_examples[3] %||% NA)),
-    ex4_char = map_chr(classification, ~ as.character(.x$char_examples[4] %||% NA)),
-    ex5_char = map_chr(classification, ~ as.character(.x$char_examples[5] %||% NA)),
-    full_numeric = map(classification, "numeric_full"),
-    full_char = map(classification, "char_full")
-  ) |> 
-  select(variable, ex1_num:ex5_char, full_numeric, full_char)
-
-cat("## Numeric Indicators\n\n")
-cat("### Indicators with non-missing numeric data\n\n")
-
-# Note: just check value 1; if it's NA, all are NA
-num_vars <- diagnostics |> 
-  filter(!is.na(ex1_num)) |>
-  pull(variable)
-
-num_vars |> kable()
-
-cat("### Samples of values\n\n")
-
-diagnostics |>
-  select(variable, ex1_num:ex5_num) |> kable()
-
-cat("## Character Indicators\n\n")
-cat("### Indicators with non-missing character data\n\n")
-
-char_vars <- diagnostics |> 
-  filter( !is.na(ex1_char)) |>
-  pull(variable)
-
-char_vars |> kable()
-
-cat("### Sample of Values\n\n")
-
-diagnostics |>
-  select(variable, ex1_char:ex5_char) |> kable()
-
-cat("## Logical Variables\n\n")
-
-cat("### Indicators with non-missing logical data\n\n")
-
-logical_vars <- diagnostics |> 
-  filter(ex1_num %in% c(0,1)) |>
-  filter(ex2_num %in% c(0,1)) |>
-  filter(is.na(ex3_num)) |> 
-  pull(variable)
-
-logical_vars |> kable()
-
-cat("### Sample of Values\n\n")
-
-diagnostics |>
-  filter(variable %in% logical_vars) |>
-  select(variable, ex1_num:ex5_num) |> kable()
-
-cat("## Mixed Variables\n\n")
-
-mixed_vars <- diagnostics |> 
-  filter(!is.na(ex1_num) & !is.na(ex1_char)) |>
-  pull(variable)
-
-mixed_vars |> kable()
-
-cat("### Sample of Values\n\n")
-
-diagnostics |>
-  filter(variable %in% mixed_vars) |>
-  select(variable, ex1_num:ex5_num, ex1_char:ex5_char) |> kable()
-
-## Char only vars
-char_only_vars <- char_vars |> setdiff(mixed_vars)
+    n_countries = n(),
+    n_regions = n_distinct(region),
+    n_income_groups = n_distinct(income_group),
+  ) |>
+  kable()
 
 ```
 
-### Notes
+## Indicators Per Year
 
-`croplandchange` is mixed; has an empty string, but mostly numeric values. This should not affect results since numeric operations will coerce this to NA.
+The below table shows the number of non-missing indicators a country has in each year.
+<br><br>
+```{r country_indicators, echo=FALSE, message=FALSE}
+DT::datatable(country_indicator_summary, rownames = FALSE, options = list(pageLength = 20, scrollX = TRUE))
+```
 
-## Dataframe Preparation
+# Regions
 
-Create a dataframe named `analysis_long_data` with:
+## Summary
 
-* Renamed columns for ease of debugging (lowercase, snake case between words, units/metrics as suffixes)
-* Renamed `variable` column for ease of debugging (same rules as above)
-* Non-numeric variables removed (i.e., `righttofood`, `foodenviropolicies`)
+```{r region_summary, echo=FALSE, message=FALSE}
+region_summary <- get_region_summary(raw_data)
 
-Note: upon finishing this process, renaming can be removed with little work. Alternatively, renaming can be kept and reversed. The results would be the same.
+region_summary |> kable()
+```
 
-```{r data_cleaning, echo=FALSE}
+# Income Groups
 
-analysis_long_data <- data |> 
-  filter(!variable %in% c("righttofood", "foodenviropolicies")) |> 
-  mutate(
-    variable = clean_analysis_data_variables(variable),
-  ) |> 
-  mutate( # Utility variables to make it easier to work with columns with spaces
-    fsci_region = FSCI_region,
-    un_contentinal_region = `UN Continental Region`,
-    milestone_pctile = if_else(desirable_direction == -1, 0.2, 0.8)
-  )
+## Summary
 
-regions <- get_regions(analysis_long_data)
-income_groups <- get_income_groups(analysis_long_data)
+```{r income_group_summary, echo=FALSE, message=FALSE}
+income_group_summary <- get_income_group_summary(raw_data)
+income_group_summary |> kable()
+```
 
-target_data <- targets |> 
-  rename(
-    variable = `Variable name`,
-    indicator = `Indicator`,
-    unit = `Unit`,
-    thematic_grouping = `Thematic Grouping`,
-    has_target = `Target (yes/no)`,
-    target = `Target Global (value)`,
-  ) |> 
-  mutate(
-    has_target = if_else(has_target == "Yes", TRUE, FALSE)
-  )
+# Indicators
+
+```{r indicator_summary, echo=FALSE, message=FALSE}
+indicator_summary <- get_indicator_summary(raw_data)
+```
+
+## Summary
+
+```{r indicator_summary_table, echo=FALSE, message=FALSE}
+
+indicator_summary |> 
+  summarize(
+    n_indicators = n(),
+    first_year = min(first_year),
+    latest_year = max(latest_year),
+    total_years = latest_year - first_year + 1
+  ) |>
+  kable()
 
 ```
 
+## Indicators 
 
+```{r indicator_table, echo=FALSE, message=FALSE}
 
-# Process Data & Calculate Metrics
-
-```{r extract_data_and_milestones, echo=FALSE, results='asis'}
-
-# Initialize a list to store data for each variable
-metrics_data <- tibble()
-failing_variables <- c()
-warning_variables <- c()
-
-indicator_variables <- get_indicator_variables(analysis_long_data, exclude = c("righttofood", "foodenviropolicies"))
-
-for(indicator_variable in indicator_variables) {
-  
-  # Initialize in the event of an error
-  indicator_metrics <- tibble()
-  
-  short_label <- target_data |> 
-    filter(variable == indicator_variable) |> 
-    pull(indicator)
-  
-  cat(paste0("Processing `", indicator_variable ,"`: ", short_label, " ...\n"))
-  tryCatch(
-    {
-      indicator_data <- extract_indicator_data(analysis_long_data, indicator_variable)
-      target_value <- get_target_value(indicator_variable, target_data)
-      indicator_milestone_metrics <- calculate_milestone_metrics(indicator_data) # All years for milestones
-      indicator_distance_metrics <- calculate_distance_metrics(indicator_data, indicator_milestone_metrics, target_value)
-      indicator_velocity_metrics <- calculate_velocity_metrics(indicator_data, indicator_milestone_metrics, target_value, target_year)
-      
-      indicator_metrics <- indicator_milestone_metrics |> 
-        mutate(
-          target_value = target_value
-        ) |> 
-        inner_join(indicator_distance_metrics, by = c("variable", "country", c("year" = "latest_year"))) |>  # Narrows to 2022 
-        rename(
-          latest_year = year,
-          latest_year_value = value,
-        ) |> 
-        select(variable, country, latest_year,  latest_year_value, everything()) |> # Rearrange
-        inner_join(indicator_velocity_metrics |> select(-milestone_global, -milestone_region, -milestone_income_group), by = c("variable", "country", "latest_year")) 
-      
-      cat(paste0("✅ Sucessfully processed.\n\n"))
-    },
-    warning = function(w) {
-      warning_variables <- c(warning_variables, indicator_variable)
-      cat(paste0("⚠️ Warning processing ", indicator_variable, ": ", w$message, "\n\n"))
-    },
-    error = function(e) {
-      failing_variables <- c(failing_variables, indicator_variable)
-      cat(paste0("💣 Error processing ", indicator_variable, ": ", e$message, "\n\n"))
-    }
-  )
-  
-  metrics_data <- bind_rows(metrics_data, indicator_metrics)
-}
-```
-
-# Milestone, Distance, and Velocity Metrics
-
-```{r milestones_and_growth_rates, results='asis', echo=FALSE}
-
-  DT::datatable(metrics_data, 
-    options = list(
-      pageLength = 30,
-      scrollX = TRUE
-    )
-  )
-
-readr::write_csv(metrics_data, "data/metrics_data.csv")
-
-
+DT::datatable(indicator_summary, rownames = FALSE, options = list(pageLength = 60, scrollX = TRUE))
 
 ```

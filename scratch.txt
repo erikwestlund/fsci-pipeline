@@ -1,28 +1,4 @@
-get_regions <- function(data) {
-  data |> pull(`UN Continental Region`) |> as.character() |> sort() |> unique()
-}
-
-get_income_groups <- function(data) {
-  data |> filter(
-    !is.na(income_group)
-  ) |> 
-    pull("income_group") |>
-    as.character() |> 
-    unique()
-}
-
-get_indicator_variables <- function(data, exclude = c()) {
-  data |>
-    filter(
-      !variable %in% exclude
-    ) |>
-    pull(variable) |>
-    as.character() |>
-    sort() |>
-    unique()
-}
-
-get_country_indicator_summary <- function(data) {
+get_countries <- function(data) {
   min_year <- min(data$year)
   max_year <- max(data$year)
   
@@ -68,7 +44,7 @@ get_country_indicator_summary <- function(data) {
     arrange(country)
 }
 
-get_region_summary <- function(data) {
+get_regions <- function(data) {
   data |> 
     mutate(
       region = `UN Continental Region`
@@ -81,7 +57,7 @@ get_region_summary <- function(data) {
     arrange(region)
 }
 
-get_income_group_summary <- function(data) {
+get_income_groups <- function(data) {
   summary_data <- data |> 
     mutate(
       region = `UN Continental Region`
@@ -107,66 +83,15 @@ get_income_group_summary <- function(data) {
     select(-prefix_rank)
 }
 
-get_indicator_summary <- function(data) {
-  data_type_distinct_values <- data |> 
-    mutate(
-      value = ifelse(is.na(value) | value == "", NA, value) # Handle missing or empty values
-    ) |> 
-    filter(!is.na(value)) |> # Keep only rows with valid data
-    group_by(variable) |> 
-    summarise(
-      data_type = determine_data_type(value), # Determine data type for each variable
-      distinct_values = n_distinct(value, na.rm = TRUE), # Total distinct values across all years
-      .groups = "drop"
-    )
-  
-  summary_metrics <- data |> 
-    mutate(
-      value = ifelse(is.na(value) | value == "", NA, value) # Handle missing or empty values
-    ) |> 
-    filter(!is.na(value)) |> # Keep only rows with valid data
-    group_by(variable, year) |> 
-    summarise(
-      country_count = n(), 
-      .groups = "drop"
-    ) |> 
-    group_by(variable) |> 
-    summarise(
-      years_of_data = n_distinct(year), # Number of years with data
-      first_year = min(year), # First year with data
-      first_year_countries = country_count[year == min(year)], # Countries in the first year
-      latest_year = max(year), # Latest year with data
-      latest_year_countries = country_count[year == max(year)], # Countries in the latest year
-      lowest_reporting_year = year[which.min(country_count)], # Year with the smallest count
-      lowest_year_countries = min(country_count), # Smallest count
-      highest_reporting_year = year[which.max(country_count)], # Year with the largest count
-      highest_year_countries = max(country_count), # Largest count
-      avg_reporting_year = round(mean(country_count), 1), # Average reporting countries
-      .groups = "drop"
-    )
-  
-  summary_metrics |> 
-    left_join(data_type_distinct_values, by = "variable") |> 
-    left_join(data |> select(variable, indicator) |> distinct(), by = "variable") |>
-    select(variable, indicator,  data_type, distinct_values, everything())
-}
-
-determine_data_type <- function(values) {
-  values <- as.character(values) # Coerce to character
-  
-  # Attempt numeric coercion
-  numeric_values <- suppressWarnings(as.numeric(values))
-  
-  if (all(!is.na(numeric_values))) {
-    # Check for boolean
-    if (all(numeric_values %in% c(0, 1))) {
-      return("boolean")
-    }
-    return("numeric")
-  }
-  
-  # If not numeric, it's character
-  return("character")
+get_indicator_variables <- function(data, exclude = c()) {
+  data |>
+    filter(
+      !variable %in% exclude
+    ) |>
+    pull(variable) |>
+    as.character() |>
+    sort() |>
+    unique()
 }
 
 clean_analysis_data_variables <- function(variables) {
@@ -227,13 +152,13 @@ extract_target_data <- function(indicator_variable) {
 # Encapsulate the calculation of milestone data and distance/progress metrics
 # into a single function.
 calculate_milestone_metrics <- function(
-    indicator_data,
-    regions_col = "UN Continental Region",
-    income_groups_col = "income_group",
-    variable_col = "variable",
-    year_col = "year",
-    country_col = "country",
-    value_col = "value"
+  indicator_data,
+  regions_col = "UN Continental Region",
+  income_groups_col = "income_group",
+  variable_col = "variable",
+  year_col = "year",
+  country_col = "country",
+  value_col = "value"
 ) {
   milestone_global_data <- calculate_milestones(indicator_data, variable_col, year_col, value_col) |>
     rename(milestone_global = milestone)
@@ -282,13 +207,13 @@ calculate_milestones <- function(
 }
 
 calculate_distance_metrics <- function(
-    indicator_data,
-    indicator_milestone_metrics, 
-    target_value = NA,
-    variable_col = "variable",
-    year_col = "year",
-    country_col = "country",
-    value_col = "value"
+  indicator_data,
+  indicator_milestone_metrics, 
+  target_value = NA,
+  variable_col = "variable",
+  year_col = "year",
+  country_col = "country",
+  value_col = "value"
 ) {
   distance_starting_data <- get_recent_data_values(indicator_data, year_col, country_col, value_col)
   
@@ -315,14 +240,14 @@ calculate_distance_metrics <- function(
 }
 
 calculate_velocity_metrics <- function(
-    indicator_data,
-    indicator_milestone_metrics, 
-    target_value = NA,
-    target_year = 2030,
-    variable_col = "variable",
-    year_col = "year",
-    country_col = "country",
-    value_col = "value"
+  indicator_data,
+  indicator_milestone_metrics, 
+  target_value = NA,
+  target_year = 2030,
+  variable_col = "variable",
+  year_col = "year",
+  country_col = "country",
+  value_col = "value"
 ) {
   velocity_starting_data <- get_recent_data_values(indicator_data, year_col, country_col, value_col)
   by_year_velocities <- calculate_growth_required_metrics(velocity_starting_data, indicator_milestone_metrics, target_value, target_year)
@@ -336,10 +261,10 @@ calculate_velocity_metrics <- function(
 }
 
 get_recent_data_values <- function(
-    indicator_data,
-    year_col = "year",
-    country_col = "country",
-    value_col = "value"
+  indicator_data,
+  year_col = "year",
+  country_col = "country",
+  value_col = "value"
 ) {
   indicator_data |> 
     filter(!is.na(!!sym(value_col))) |>  # Remove rows with NA values in the target column
@@ -414,10 +339,10 @@ calculate_growth_required_metrics <- function(
 }
 
 calculate_cagr_required_to_hit_target_value_by_target_year <- function(
-    starting_value,
-    starting_year,
-    target_value, 
-    target_year
+  starting_value,
+  starting_year,
+  target_value, 
+  target_year
 ) {
   100 * ((target_value / starting_value) ^ (1 / (target_year - starting_year)) - 1)
 }
@@ -521,4 +446,4 @@ calculate_growth_rates <- function(milestone_data,
       ),
       .groups = "drop"
     )
-}
+}        
