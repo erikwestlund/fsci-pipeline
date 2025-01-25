@@ -6,7 +6,7 @@ The pipeline comprises a series of RMarkdown notebooks which process the data an
 
 ## Steps
 
-* `1_metrics_calculation.Rmd`: This notebook reads in the raw data, prepares it for analysis, generates a report on the data, and saves the output to the output directory. Two files are saved: 
+1. `1_metrics_calculation.Rmd`: This notebook reads in the raw data, prepares it for analysis, generates a report on the data, and saves the output to the output directory. Two files are saved: 
   - `output/metrics_data.rds`
   - `output/metrics_combined_dataframe.rds`
   
