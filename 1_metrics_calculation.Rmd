@@ -152,16 +152,15 @@ for(indicator_variable_metrics in metrics_data) {
   cat("### Distance Metrics\n\n")
   if (indicator_variable_metrics$meta$data_type == "numeric") {
 
-    
   } else if(indicator_variable_metrics$meta$data_type == "character") {
     cat("Data type is `character`. No distance metrics available.\n\n")
   } else if(indicator_variable_metrics$meta$data_type == "boolean") {
     cat("Data type is `boolean`. No distance metrics available.\n\n")
   }
 
-
-
-
+  cat("\n\n")
+  cat("---")
+  cat("\n\n")
 }
 
 ```
