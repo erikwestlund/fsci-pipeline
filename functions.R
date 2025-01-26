@@ -193,6 +193,7 @@ calculate_milestones <- function(
     unique()  # Remove duplicates. We only remove duplicate rows so no information is lost when calculating metrics.
 }
 
+
 #' calculate_velocity_cagr_required_to_hit_target_value_by_target_year
 #'
 #' @description Calculates the compound annual growth rate (CAGR) required to reach a target value from a starting value 
@@ -233,8 +234,6 @@ calculate_velocity_cagr_required_to_hit_target_value_by_target_year <- function(
 ) {
   100 * ((target_value / starting_value) ^ (1 / (target_year - starting_year)) - 1)
 }
-
-
 
 
 #' calculate_velocity_linear_growth_rate_required_to_hit_target_value_by_target_year
@@ -417,7 +416,6 @@ calculate_velocity_required_to_hit_milestone_metrics <- function(
     ) |> 
     ungroup()
 }
-
 
 
 #' clean_analysis_data_variables
@@ -608,6 +606,7 @@ get_analysis_data <- function(raw_data) {
       country, variable, indicator, short_label, year, value, un_continental_region, income_group, desirable_direction, milestone_pctile
     )
 }
+
 
 #' get_country_indicator_summary
 #'
@@ -953,6 +952,7 @@ get_indicator_variable_metrics <- function(analysis_data, indicator_summary, tar
   )
 }
 
+
 #' get_indicator_variables
 #'
 #' @description Extracts and returns a sorted, unique list of indicator variables from the provided dataset,
@@ -1081,6 +1081,7 @@ get_recent_data_values <- function(
     unique()   # Remove duplicates. We only remove duplicate rows so no information is lost when calculating metrics.
 }
 
+
 #' get_region_summary
 #'
 #' @description Summarizes the dataset by UN continental regions, providing the number of distinct countries and income groups for each region.
@@ -1107,6 +1108,7 @@ get_region_summary <- function(data) {
     ) |> 
     arrange(region)
 }
+
 
 #' get_target_data
 #'
