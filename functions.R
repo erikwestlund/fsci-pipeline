@@ -49,6 +49,7 @@ calculate_distance_metrics <- function(
   distance_starting_data <- get_recent_data_values(indicator_data, year_col, country_col, value_col)
   
   indicator_milestone_metrics |>
+    mutate(target_value = target_value) |>
     left_join(
       indicator_data |> select(all_of(c(variable_col, year_col, country_col, value_col))),
       by = c("variable", "year", "country")
@@ -124,6 +125,7 @@ calculate_milestone_metrics <- function(
   milestone_global_data |>
     left_join(milestone_region_data, by = c(variable_col, year_col, country_col)) |>
     left_join(milestone_income_group_data, by = c(variable_col, year_col, country_col)) |>
+    select(all_of(c(variable_col, year_col, country_col)), everything()) |> 
     arrange(country_col, -!!sym(year_col))
 }
 
@@ -716,6 +718,24 @@ get_income_groups <- function(data) {
 }
 
 
+#' get_income_group_col
+#'
+#' @description Returns the column name representing income groups in the provided dataset. 
+#' Currently, this function assumes the column name is always `income_group`.
+#'
+#' @param data A data frame that contains a column representing income groups.
+#'   The column is expected to be named `income_group`.
+#'
+#' @return A character string specifying the name of the income group column, i.e., `"income_group"`.
+#'
+#' @examples
+#' # Example usage:
+#' income_group_col <- get_income_group_col(data)
+get_income_group_col <- function(data) {
+  return("income_group")
+}
+
+
 #' get_income_group_summary
 #'
 #' @description Summarizes the dataset by income groups, providing the number of distinct countries and regions for each income group. The function also ensures income groups are arranged in a meaningful order based on their prefixes.
@@ -732,9 +752,10 @@ get_income_groups <- function(data) {
 #' # Example usage:
 #' get_income_group_summary(data)
 get_income_group_summary <- function(data) {
+  region_col <- get_region_col(data)
   summary_data <- data |> 
     mutate(
-      region = `UN Continental Region`
+      region = !!sym(region_col)
     ) |> 
     group_by(income_group) |>
     summarise(
@@ -869,8 +890,20 @@ get_indicator_summary <- function(analysis_data) {
 #'   target_year = 2030,
 #'   data_patches = data_patches
 #' )
-get_indicator_variable_metrics <- function(analysis_data, indicator_summary, target_data, indicator_variable, target_year, data_patches) {
+get_indicator_variable_metrics <- function(
+  analysis_data, 
+  indicator_summary,
+  target_data,
+  indicator_variable, 
+  target_year,
+  data_patches
+) {
   indicator_variable_metrics <- tibble()
+  region_col <- get_region_col(analysis_data)
+  income_group_col <- get_income_group_col(analysis_data)
+  milestone_summary <- tibble()
+  
+  indicator_summary_data <- indicator_summary |> filter(variable == indicator_variable)
   failing_variables <- list()
   warning_variables <- list()
   
@@ -914,9 +947,25 @@ get_indicator_variable_metrics <- function(analysis_data, indicator_summary, tar
           unique() |> 
           arrange(country)
         
+        country_region_income_group <- analysis_data |> 
+          filter(variable == indicator_variable) |> 
+          select(country, region_col, income_group_col) |> 
+          rename(
+            region = region_col,
+            income_group = income_group_col
+          ) |> 
+          unique()
+        
         indicator_variable_metrics <- indicator_metrics_countries_with_data |> 
           bind_rows(countries_without_data) |> 
+          left_join(country_region_income_group, by = "country") |>
+          select(variable, country, region, income_group, everything()) |> 
           arrange(country)
+        
+        # Get summaries of these metrics by global, region, income group
+        milestone_summary <- get_summary_milestones(indicator_variable_metrics, target_value, region_col, income_group_col)
+        velocity_summary <- get_summary_velocities(indicator_variable_metrics, target_value, region_col, income_group_col)
+        
         message <- "Indicator variable successfully processed."
       },
       warning = function(w) {
@@ -940,6 +989,8 @@ get_indicator_variable_metrics <- function(analysis_data, indicator_summary, tar
     data = indicator_variable_metrics,
     meta = list(
       data_type = data_type,
+      summary = indicator_summary_data,
+      milestone_summary = milestone_summary,
       variable = indicator_variable,
       failing = length(failing_variables) > 0,
       warnings = length(warning_variables) > 0,
@@ -982,7 +1033,7 @@ get_indicator_variables <- function(data, exclude = c()) {
 #' The function processes raw data, applies data patches, computes milestones, distances, and velocities, 
 #' and organizes the results by indicator.
 #'
-#' @param raw_data A data frame containing the raw input data for analysis.  This should be read in from a
+#' @param raw_analysis_data A data frame containing the raw input data for analysis.  This should be read in from a
 #'   pre-processed CSV or RDS file from the FSCI 2024 repository: https://github.com/KateSchneider-FoodPol/FSCI_2024Interactions_Replication/tree/main/Output%20data
 #' @param indicator_summary A data frame summarizing key characteristics of each indicator, including 
 #'   data types and descriptive information.
@@ -1003,28 +1054,32 @@ get_indicator_variables <- function(data, exclude = c()) {
 #' @examples
 #' # Generate metrics data for all indicators
 #' metrics_data <- get_metrics_data(
-#'   raw_data = raw_data,
+#'   raw_analysis_data = raw_analysis_data,
 #'   indicator_summary = indicator_summary,
 #'   raw_target_data = raw_target_data,
 #'   target_year = 2030,
 #'   data_patches = list()
 #' )
 get_metrics_data <- function(
-    raw_data,
+    raw_analysis_data,
     indicator_summary,
     raw_target_data,
     target_year = 2030,
     data_patches = list()
 ) {
-  analysis_data <- get_analysis_data(raw_data)
-  regions <- get_un_regions(analysis_data)
-  income_groups <- get_income_groups(analysis_data)
+  analysis_data <- get_analysis_data(raw_analysis_data)
   target_data <- get_target_data(raw_target_data)
   indicator_variables <- get_indicator_variables(analysis_data)
   
   map(
     indicator_variables, 
-    ~ get_indicator_variable_metrics(analysis_data, indicator_summary, target_data, .x, target_year, data_patches)
+    ~ get_indicator_variable_metrics(
+        analysis_data,
+        indicator_summary,
+        target_data,
+        .x,
+        target_year, data_patches
+    )
   ) |> 
     set_names(indicator_variables)
 }
@@ -1094,9 +1149,11 @@ get_recent_data_values <- function(
 #' # Example usage:
 #' get_region_summary(data)
 get_region_summary <- function(data) {
+  region_col <- get_region_col(data)
+  
   data |> 
     mutate(
-      region = `UN Continental Region`
+      region = !!sym(region_col),
     ) |> 
     group_by(region) |>
     summarise(
@@ -1104,6 +1161,248 @@ get_region_summary <- function(data) {
       n_income_groups = n_distinct(income_group)
     ) |> 
     arrange(region)
+}
+
+#'
+#' @description Determines the correct column name for the UN continental region in a given dataset. 
+#' This function checks for the presence of the column `UN Continental Region` or `un_continental_region` 
+#' and returns the appropriate column name.
+#'
+#' @param data A data frame that may contain a column representing the UN continental region.
+#'
+#' @return A character string indicating the column name for the UN continental region. 
+#' Returns `"UN Continental Region"` if it exists in the data, otherwise `"un_continental_region"`.
+#'
+#' @examples
+#' # Example usage:
+#' region_col <- get_region_col(data)
+get_region_col <- function(data) {
+  ifelse("UN Continental Region" %in% colnames(data), "UN Continental Region", "un_continental_region")
+}
+
+
+#' get_regions
+#'
+#' @description Extracts and returns a sorted, unique list of UN continental regions from the provided dataset. 
+#' The function dynamically determines the correct column name for the region using `get_region_col()`.
+#'
+#' @param data A data frame that contains a column representing the UN continental regions.
+#'   The column name can be either `UN Continental Region` or `un_continental_region`.
+#'
+#' @return A character vector of sorted, unique UN continental region names from the specified column.
+#'
+#' @examples
+#' # Example usage:
+#' regions <- get_regions(data)
+get_regions <- function(data) {
+  data |> pull(get_region_col(data)) |> as.character() |> sort() |> unique()
+}
+
+
+#' get_summary_milestones
+#'
+#' @description Generates a summary of milestone values for a given indicator, including global, regional, and income group milestones. 
+#' The output is a standardized table with two columns: `Group` (e.g., "Global", "Region: [Region]", "Income Group: [Group]") and `Milestone`.
+#'
+#' @param indicator_variable_metrics A data frame containing metrics for an indicator, including milestone columns 
+#'   (`milestone_global`, `milestone_region`, `milestone_income_group`).
+#' @param target_value The target value for the indicator.
+#' @param region_col The column name representing the region.
+#' @param income_group_col The column name representing the income group.
+#'
+#' @return A tibble with two columns:
+#' - `Group`: The group type (Global, Region: [Region], or Income Group: [Group]).
+#' - `Milestone`: The milestone value for each group.
+#'
+#' @examples
+#' # Example usage with indicator metrics
+#' summary_milestones <- get_summary_milestones(
+#'   indicator_variable_metrics = indicator_variable_metrics,
+#'   region_col = "region",
+#'   income_group_col = "income_group"
+#' )
+get_summary_milestones <- function(indicator_variable_metrics, target_value = NA, region_col = "un_continental_group", income_group_col = "income_group") {
+  # Summarize milestones 
+  global_milestone <- indicator_variable_metrics |> filter(!is.na(milestone_global)) |> pull(milestone_global) |> first()
+   region_milestones <- indicator_variable_metrics |> filter(!is.na(milestone_region)) |> group_by(region) |> summarise(milestone = first(milestone_region)) |> filter(!is.na(region))
+   income_group_milestones <- indicator_variable_metrics |> 
+     filter(!is.na(milestone_income_group)) |> 
+     group_by(income_group) |> 
+     summarise(milestone = first(milestone_income_group)) |> 
+     filter(!is.na(income_group)) |> 
+     mutate(
+       income_group = factor(income_group, levels = c("Low income", "Lower middle income", "Upper middle income", "High income")) # Define factor levels for sorting
+     ) |>
+     arrange(income_group)
+
+   if(!is.na(target_value)) {
+     summary <- tibble(Group = "Target", Milestone = target_value)
+   } else {
+     summary <- tibble()
+   }
+   
+   # Get average values
+   global_avg_value <- indicator_variable_metrics |>
+     filter(!is.na(latest_year_value)) |>
+     summarise(avg_value = mean(latest_year_value, na.rm = TRUE)) |>
+     pull(avg_value)
+   
+   region_avg_values <- indicator_variable_metrics |>
+     filter(!is.na(latest_year_value)) |>
+     group_by(region) |>
+     summarise(avg_value = mean(latest_year_value, na.rm = TRUE)) |>
+     filter(!is.na(region)) |>
+     mutate(Group = paste0("Region: ", region)) |>
+     select(Group, avg_values_latest_year = avg_value)
+   
+   income_group_avg_values <- indicator_variable_metrics |>
+     filter(!is.na(latest_year_value)) |>
+     group_by(income_group) |>
+     summarise(avg_value = mean(latest_year_value, na.rm = TRUE)) |>
+     filter(!is.na(income_group)) |>
+     mutate(
+       income_group = factor(income_group, levels = c("Low income", "Lower middle income", "Upper middle income", "High income")),
+       Group = paste0("Income Group: ", income_group)
+     ) |>
+     arrange(income_group) |>
+     select(Group, avg_values_latest_year = avg_value)
+   
+   target_avg_value <- if (!is.na(target_value)) {
+     indicator_variable_metrics |>
+       filter(!is.na(latest_year_value)) |>
+       summarise(avg_value = mean(latest_year_value, na.rm = TRUE)) |>
+       pull(avg_value)
+   } else {
+     NA
+   }
+   
+   # Initial summary table
+   summary <- bind_rows(
+     summary,
+     tibble(Group = "Global", Milestone = global_milestone),
+     region_milestones |> 
+       mutate(Group = paste0("Region: ", region)) |> 
+       select(Group, Milestone = milestone),
+     income_group_milestones |> 
+       mutate(Group = paste0("Income Group: ", income_group)) |> 
+       select(Group, Milestone = milestone)
+   ) |> 
+   left_join(
+     bind_rows(
+       tibble(Group = "Target", "avg_values_latest_year" = target_avg_value),
+       tibble(Group = "Global", "avg_values_latest_year" = global_avg_value),
+       region_avg_values,
+       income_group_avg_values
+     ),
+     by = "Group"
+   )
+   
+   ## Summarize distances
+   # Global Average Distance
+   global_metrics <- indicator_variable_metrics |>
+     summarise(
+       avg_distance = mean(distance_to_milestone_global, na.rm = TRUE),
+       countries_total = n_distinct(country),
+       countries_missing = sum(is.na(distance_to_milestone_global)),
+       countries_contributing = countries_total - countries_missing
+     ) |> 
+     select(avg_distance, countries_total, countries_contributing, countries_missing)
+   
+   # Target Average Distance
+   target_metrics <- if (!is.na(target_value)) {
+     indicator_variable_metrics |>
+       summarise(
+         avg_distance = mean(distance_to_target, na.rm = TRUE),
+         countries_total = n_distinct(country),
+         countries_missing = sum(is.na(distance_to_target)),
+         countries_contributing = countries_total - countries_missing
+       ) |>
+       select(avg_distance, countries_total, countries_contributing, countries_missing)
+   } else {
+     tibble(
+       avg_distance = NA,
+       countries_total = n_distinct(indicator_variable_metrics$country),
+       countries_contributing = 0,
+       countries_missing = n_distinct(indicator_variable_metrics$country)
+     )
+   }
+   
+   # Regional Average Distance
+   region_avg_distances <- indicator_variable_metrics |>
+     group_by(region) |>
+     summarise(
+       avg_distance = mean(distance_to_milestone_region, na.rm = TRUE),
+       countries_total = n_distinct(country),
+       countries_missing = sum(is.na(distance_to_milestone_region)),
+       countries_contributing = countries_total - countries_missing
+     ) |>
+     mutate(Group = paste0("Region: ", region)) |>
+     select(Group, avg_distance, countries_total, countries_contributing, countries_missing)
+   
+   # Income Group Average Distance
+   income_group_avg_distances <- indicator_variable_metrics |>
+     group_by(income_group) |>
+     summarise(
+       avg_distance = mean(distance_to_milestone_income_group, na.rm = TRUE),
+       countries_total = n_distinct(country),
+       countries_missing = sum(is.na(distance_to_milestone_income_group)),
+       countries_contributing = countries_total - countries_missing
+     ) |>
+     mutate(Group = paste0("Income Group: ", income_group)) |>
+     filter(!is.na(income_group)) |>
+     select(Group, avg_distance, countries_total, countries_contributing, countries_missing)
+   
+   # Add back in distances
+   summary <- summary |>
+     left_join(
+       bind_rows(
+         tibble(
+           Group = "Target",
+           avg_distance = target_metrics$avg_distance,
+           countries_total = target_metrics$countries_total,
+           countries_contributing = target_metrics$countries_contributing,
+           countries_missing = target_metrics$countries_missing
+         ),
+         tibble(
+           Group = "Global",
+           avg_distance = global_metrics$avg_distance,
+           countries_total = global_metrics$countries_total,
+           countries_contributing = global_metrics$countries_contributing,
+           countries_missing = global_metrics$countries_missing
+         ),
+         region_avg_distances |>
+           select(Group, avg_distance, countries_total, countries_contributing, countries_missing),
+         income_group_avg_distances |>
+           select(Group, avg_distance, countries_total, countries_contributing, countries_missing)
+       ),
+       by = "Group"
+     ) |> 
+     mutate(
+       Milestone = round(Milestone, 2),
+       avg_values_latest_year = round(avg_values_latest_year, 2),
+       avg_distance = round(avg_distance, 2),
+       missing_pct = round(100 * countries_missing / countries_total, 1),
+     ) |> 
+     rename(
+       `Average Value (Latest Year)` = avg_values_latest_year,
+       `Average Distance To Target/Milestone` = avg_distance,
+       `Countries Total` = countries_total,
+       `Countries Contributing` = countries_contributing,
+       `Countries Missing` = countries_missing,
+       `Missing (%)` = missing_pct
+     )
+   
+   return(summary)
+}
+
+
+get_summary_distances <- function(indicator_variable_metrics, target_value = NA, region_col = "un_continental_group", income_group_col = "income_group") {
+   
+}
+
+
+get_summary_velocities <- function(indicator_variable_metrics, target_value = NA, region_col = "un_continental_group", income_group_col = "income_group") {
+   
 }
 
 
@@ -1187,7 +1486,7 @@ get_target_value <- function(indicator_variable, target_data) {
 #' # Get unique UN regions
 #' get_un_regions(example_data)
 get_un_regions <- function(data) {
-  region_col <- if_else("un_continental_region" %in% names(data), "un_continental_region", "UN Continental Region")
+  region_col <- region_col <- get_region_col(data)
   data |> pull(!!sym(region_col)) |> as.character() |> sort() |> unique()
 }
 
@@ -1303,6 +1602,19 @@ summarize_metrics_collection <- function(indicator_variable_metrics) {
       safe_summary_value(indicator_variable_metrics$meta$data_type), 
       safe_summary_value(indicator_variable_metrics$indicator), 
       safe_summary_value(indicator_variable_metrics$short_label)
+    )
+  )
+}
+
+summarize_metrics_milestones <- function(indicator_variable_metrics, region_summary, income_group_summary) {
+  tibble(
+    Key = c("Global Milestone", "Milestone 2", "Milestone 3", "Milestone 4", "Milestone 5"),
+    Value = c(
+      safe_summary_value(indicator_variable_metrics$milestones[1]), 
+      safe_summary_value(indicator_variable_metrics$milestones[2]), 
+      safe_summary_value(indicator_variable_metrics$milestones[3]), 
+      safe_summary_value(indicator_variable_metrics$milestones[4]), 
+      safe_summary_value(indicator_variable_metrics$milestones[5])
     )
   )
 }
