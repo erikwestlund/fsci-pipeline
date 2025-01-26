@@ -93,7 +93,9 @@ income_group_summary |> kable()
 # Indicators
 
 ```{r indicator_summary, echo=FALSE, message=FALSE}
-indicator_summary <- get_indicator_summary(raw_analysis_data)
+
+indicator_summary <- get_indicator_summary(get_analysis_data(raw_analysis_data))
+
 ```
 
 ## Summary
@@ -123,18 +125,43 @@ DT::datatable(indicator_summary, rownames = FALSE, options = list(pageLength = 6
 
 ```{r calculate_metrics, echo=FALSE, message=FALSE, results='asis'}
 
-metrics_data <- get_metrics_data(raw_analysis_data, indicator_summary, raw_target_data, target_year, data_patches)
-# metrics_data <- readRDS("output/metrics_data.rds")
+# metrics_data <- get_metrics_data(raw_analysis_data, indicator_summary, raw_target_data, target_year, data_patches)
+metrics_data <- readRDS("output/metrics_data.rds")
+analysis_data <- get_analysis_data(raw_analysis_data)
 
 # Debug:
-# indicator_variable_metrics <- metrics_data[[1]]
+# indicator_variable_metrics <- metrics_data[[3]]
 for(indicator_variable_metrics in metrics_data) {
+
   cat(paste0("## ", indicator_variable_metrics$variable, ": ", indicator_variable_metrics$short_label , "\n\n"))
-  
-  cat("\n\n")
+
+  if(length(indicator_variable_metrics$meta$data_type) == 0) {
+    stop("No data type found for ", indicator_variable_metrics$variable)
+  }
+
+  indicator_summary <- get_indicator_summary(extract_indicator_data(analysis_data, indicator_variable_metrics$variable))
+
+  cat("### Indicator Summary\n\n")
   table <- summarize_metrics_collection(indicator_variable_metrics) |> kable()
-  print(table) # Ensure the table is rendered in the output
+  print(table)
   
+  cat("### Data Summary\n\n")
+  table <- summarize_indicator_summary(indicator_summary) |> kable()
+  print(table)
+  
+  cat("### Distance Metrics\n\n")
+  if (indicator_variable_metrics$meta$data_type == "numeric") {
+
+    
+  } else if(indicator_variable_metrics$meta$data_type == "character") {
+    cat("Data type is `character`. No distance metrics available.\n\n")
+  } else if(indicator_variable_metrics$meta$data_type == "boolean") {
+    cat("Data type is `boolean`. No distance metrics available.\n\n")
+  }
+
+
+
+
 }
 
 ```

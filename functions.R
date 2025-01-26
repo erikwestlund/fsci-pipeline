@@ -762,11 +762,8 @@ get_income_group_summary <- function(data) {
 #'
 #' @description Summarizes key metrics for each indicator in the dataset, including data type, distinct values, reporting countries, and temporal data coverage.
 #'
-#' @param data A data frame containing the columns `variable`, `indicator`, `value`, and `year`. 
-#'   - `variable`: The unique identifier for each indicator.
-#'   - `indicator`: A descriptive label for the variable.
-#'   - `value`: The measured value for the indicator.
-#'   - `year`: The year of measurement.
+#' @param indicator_data A data frame containing the columns `variable`, `indicator`, `value`, and `year`. 
+#'   The `extract_indicator_data` function can be used to extract this data from the raw dataset.
 #'
 #' @return A data frame summarizing each indicator, including:
 #'   - `variable`: The indicator variable name.
@@ -787,8 +784,8 @@ get_income_group_summary <- function(data) {
 #' @examples
 #' # Example usage:
 #' get_indicator_summary(data)
-get_indicator_summary <- function(data) {
-  data_type_distinct_values <- data |> 
+get_indicator_summary <- function(analysis_data) {
+  data_type_distinct_values <- analysis_data |> 
     mutate(
       value = ifelse(is.na(value) | value == "", NA, value)  # Handle missing or empty values
     ) |> 
@@ -800,7 +797,7 @@ get_indicator_summary <- function(data) {
       .groups = "drop"
     )
   
-  summary_metrics <- data |> 
+  summary_metrics <- analysis_data |> 
     mutate(
       value = ifelse(is.na(value) | value == "", NA, value)  # Handle missing or empty values
     ) |> 
@@ -827,7 +824,7 @@ get_indicator_summary <- function(data) {
   
   summary_metrics |> 
     left_join(data_type_distinct_values, by = "variable") |> 
-    left_join(data |> select(variable, indicator) |> distinct(), by = "variable") |>
+    left_join(analysis_data |> select(variable, indicator) |> distinct(), by = "variable") |>
     select(variable, indicator,  data_type, distinct_values, everything())
 }
 
@@ -1195,6 +1192,80 @@ get_un_regions <- function(data) {
 }
 
 
+#' safe_summary_value
+#'
+#' @description Safely converts a value to a character string, replacing `NA`, `NULL`, or zero-length values with an empty string (`""`).
+#'
+#' @param value The input value to be checked and converted. It can be of any type.
+#'
+#' @return A character string. If the input value is `NA`, `NULL`, or has a length of `0`, it returns an empty string (`""`). Otherwise, it returns the character representation of the input value.
+#'
+#' @examples
+#' # Example usage of safe_summary_value
+#' safe_summary_value(NA)          # Returns ""
+#' safe_summary_value(NULL)        # Returns ""
+#' safe_summary_value("")          # Returns ""
+#' safe_summary_value("example")   # Returns "example"
+#' safe_summary_value(42)          # Returns "42"
+#'
+safe_summary_value <- function(value) {
+  if (is.null(value) || length(value) == 0 || is.na(value)) {
+    return("")
+  }
+  return(as.character(value))
+}
+
+
+#' summarize_indicator_summary
+#'
+#' @description Formats an `indicator_summary` object into a key-value pair tibble for improved readability. 
+#' The output includes details such as variable name, data type, number of distinct values, reporting years, 
+#' and other relevant metrics from the `indicator_summary` data.
+#'
+#' @param indicator_summary A data frame containing a single row summarizing an indicator.
+#'   This data can be extracted using the `get_indicator_summary` function.`
+#'
+#' @return A tibble with two columns:
+#' - `Key`: A description of each metric.
+#' - `Value`: The corresponding value from the `indicator_summary`.
+#'
+#' @examples
+#' indicator_summary <- get_indicator_summary(extract_indicator_data(analysis_data, "emint_beef"))
+#' summarize_indicator_summary(indicator_summary)
+summarize_indicator_summary <- function(indicator_summary) {
+  indicator_summary <- indicator_summary |> as.list()
+  
+  tibble(
+    Key = c(
+      "Unique Values Count",
+      "Years of Data",
+      "First Year",
+      "Countries Reporting (First Year)",
+      "Latest Year",
+      "Countries Reporting (Latest Year)",
+      "Year with Fewest Reporting Countries",
+      "Countries Reporting (Lowest Year)",
+      "Year with Most Reporting Countries",
+      "Countries Reporting (Highest Year)",
+      "Average Reporting Countries Per Year"
+    ),
+    Value = c(
+      safe_summary_value(indicator_summary$distinct_values),
+      safe_summary_value(indicator_summary$years_of_data),
+      safe_summary_value(indicator_summary$first_year),
+      safe_summary_value(indicator_summary$first_year_reporting_countries),
+      safe_summary_value(indicator_summary$latest_year),
+      safe_summary_value(indicator_summary$latest_year_reporting_countries),
+      safe_summary_value(indicator_summary$lowest_reporting_year),
+      safe_summary_value(indicator_summary$lowest_year_reporting_countries),
+      safe_summary_value(indicator_summary$highest_reporting_year),
+      safe_summary_value(indicator_summary$highest_year_reporting_countries),
+      safe_summary_value(round(indicator_summary$avg_countries_reporting_per_year, 1))
+    )
+  )
+}
+
+
 #' summarize_metrics_collection
 #'
 #' @description Summarizes the metadata and key attributes of a single indicator's metrics collection into a tibble.
@@ -1223,8 +1294,15 @@ get_un_regions <- function(data) {
 #' summary <- summarize_metrics_collection(indicator_metrics)
 #' print(summary)
 summarize_metrics_collection <- function(indicator_variable_metrics) {
-  tribble(
-    ~variable, ~data_type, ~indicator, ~short_label,
-    indicator_variable_metrics$variable, indicator_variable_metrics$meta$data_type, indicator_variable_metrics$indicator, indicator_variable_metrics$short_label
+  
+  
+  tibble(
+    Key = c("Variable", "Data Type", "Indicator", "Short Label"),
+    Value = c(
+      safe_summary_value(indicator_variable_metrics$variable), 
+      safe_summary_value(indicator_variable_metrics$meta$data_type), 
+      safe_summary_value(indicator_variable_metrics$indicator), 
+      safe_summary_value(indicator_variable_metrics$short_label)
+    )
   )
 }
