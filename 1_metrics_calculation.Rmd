@@ -28,6 +28,9 @@ library(rlang)
 library(kableExtra)
 library(DT)
 
+include_data <- TRUE
+use_cached_metrics <- TRUE
+
 ```
 
 ```{r ingest_data, echo=FALSE, message=FALSE}
@@ -126,8 +129,11 @@ DT::datatable(indicator_summary, rownames = FALSE, options = list(pageLength = 6
 
 ```{r calculate_metrics, echo=FALSE, message=FALSE, results='asis'}
 
-metrics_data <- get_metrics_data(raw_analysis_data, indicator_summary, raw_target_data, target_year, data_patches)
-# metrics_data <- readRDS("output/metrics_data.rds")
+metrics_data <- if(use_cached_metrics) {
+  readRDS("output/metrics_data.rds")
+} else {
+  get_metrics_data(raw_analysis_data, indicator_summary, raw_target_data, target_year, data_patches)
+}
 
 # Debug:
 # variable_to_test <- 'childlabor'
@@ -181,13 +187,18 @@ for(indicator_variable_metrics in metrics_data) {
 
   cat("### Data\n\n")
   
-  cat(DT::datatable(
-          indicator_variable_metrics$data,
-          rownames = FALSE,
-          options = list(pageLength = 20, scrollX = TRUE)
-        ) |> 
-          htmltools::as.tags() |> 
-          as.character())
+  if(include_data) {
+    cat(DT::datatable(
+            indicator_variable_metrics$data,
+            rownames = FALSE,
+            options = list(pageLength = 20, scrollX = TRUE)
+          ) |> 
+            htmltools::as.tags() |> 
+            as.character())
+  } else {
+    cat("Data not shown. Set `include_data = TRUE` in the notebook set up to include data.\n\n")
+  }
+  
 
   cat("\n\n")
   cat("---")
