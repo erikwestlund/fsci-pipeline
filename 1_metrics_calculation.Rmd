@@ -179,8 +179,15 @@ for(indicator_variable_metrics in metrics_data) {
     cat("Data type is `boolean`. No distance metrics available.\n\n")
   }
 
-#   cat("### Data\n\n")
-#   DT::datatable(indicator_variable_metrics$data, rownames = FALSE, options = list(pageLength = 20, scrollX = TRUE)) |> print()
+  cat("### Data\n\n")
+  
+  cat(DT::datatable(
+          indicator_variable_metrics$data,
+          rownames = FALSE,
+          options = list(pageLength = 20, scrollX = TRUE)
+        ) |> 
+          htmltools::as.tags() |> 
+          as.character())
 
   cat("\n\n")
   cat("---")
