@@ -18,14 +18,15 @@ editor_options:
 knitr::opts_chunk$set(echo = TRUE)
 
 library(dplyr)
-library(DT)
-library(kableExtra)
 library(purrr)
 library(readr)
 library(readxl)
-library(rlang)
 library(stringr)
 library(tidyr)
+
+library(rlang)
+library(kableExtra)
+library(DT)
 
 ```
 
@@ -129,47 +130,57 @@ metrics_data <- get_metrics_data(raw_analysis_data, indicator_summary, raw_targe
 # metrics_data <- readRDS("output/metrics_data.rds")
 
 # Debug:
-# indicator_variable_metrics <- metrics_data[[3]]
+# variable_to_test <- 'childlabor'
+# variable_to_test <- 'safeh20'
+# list_index <- which(sapply(metrics_data, function(x) x$variable) == variable_to_test)
+# indicator_variable_metrics <- metrics_data[[list_index]]
 for(indicator_variable_metrics in metrics_data) {
-
   cat(paste0("## ", indicator_variable_metrics$variable, ": ", indicator_variable_metrics$short_label , "\n\n"))
 
   if(length(indicator_variable_metrics$meta$data_type) == 0) {
     stop("No data type found for ", indicator_variable_metrics$variable)
   }
 
-  indicator_summary <- indicator_variable_metrics$meta$summary
+  indicator_summary <- indicator_variable_metrics$summaries$indicators
+  milestone_summary <- indicator_variable_metrics$summaries$milestones
+  velocity_summary <- indicator_variable_metrics$summaries$velocities
 
   cat("### Indicator Summary\n\n")
-  table <- summarize_metrics_collection(indicator_variable_metrics) |> kable()
-  print(table)
+  summarize_metrics_collection(indicator_variable_metrics) |> kable() |> print()
 
   cat("### Data Summary\n\n")
-  table <- summarize_indicator_summary(indicator_summary) |> kable()
-  print(table)
+  summarize_indicator_summary(indicator_summary) |> kable() |> print()
 
-  cat("### Milestone/Distance Metrics\n\n")
+  cat("### Milestone Metrics Summary\n\n")
+  
+  cat("Note that `value` is subtracted from milestone/targets, so a positive value indicates the milestone/target has not been met, while a negative value indicates the milestone/target has been exceeded.\n\n")
+  
   if (indicator_variable_metrics$meta$data_type == "numeric") {
-    table <- indicator_variable_metrics$meta$milestone_summary |> kable()
-    print(table)
-    
+    milestone_summary |> kable() |> print()
   } else if(indicator_variable_metrics$meta$data_type == "character") {
     cat("Data type is `character`. No distance metrics available.\n\n")
   } else if(indicator_variable_metrics$meta$data_type == "boolean") {
     cat("Data type is `boolean`. No distance metrics available.\n\n")
   }
+
+  cat("### Velocity Metrics Summary {.tabset}\n\n")
   
-   cat("### Velocity Metrics {.tabset}\n\n")
+  cat("Growth rates are reported in percents. Note that CAGRs cannot be calculated for values where the starting or ending value is 0.\n\n")
+
+  
   if (indicator_variable_metrics$meta$data_type == "numeric") {
     cat("#### CAGR\n\n")
-    
+    velocity_summary$cagr |> kable() |> print()
     cat("#### Linear Growth\n\n")
-    
+    velocity_summary$linear |> kable() |> print()
   } else if(indicator_variable_metrics$meta$data_type == "character") {
     cat("Data type is `character`. No distance metrics available.\n\n")
   } else if(indicator_variable_metrics$meta$data_type == "boolean") {
     cat("Data type is `boolean`. No distance metrics available.\n\n")
   }
+
+#   cat("### Data\n\n")
+#   DT::datatable(indicator_variable_metrics$data, rownames = FALSE, options = list(pageLength = 20, scrollX = TRUE)) |> print()
 
   cat("\n\n")
   cat("---")
