@@ -157,8 +157,18 @@ for(indicator_variable_metrics in metrics_data) {
     cat("Data type is `character`. No distance metrics available.\n\n")
   } else if(indicator_variable_metrics$meta$data_type == "boolean") {
     cat("Data type is `boolean`. No distance metrics available.\n\n")
-  } else {
-    cat ("LOOK INTO THIS!!\n\n")
+  }
+  
+   cat("### Velocity Metrics {.tabset}\n\n")
+  if (indicator_variable_metrics$meta$data_type == "numeric") {
+    cat("#### CAGR\n\n")
+    
+    cat("#### Linear Growth\n\n")
+    
+  } else if(indicator_variable_metrics$meta$data_type == "character") {
+    cat("Data type is `character`. No distance metrics available.\n\n")
+  } else if(indicator_variable_metrics$meta$data_type == "boolean") {
+    cat("Data type is `boolean`. No distance metrics available.\n\n")
   }
 
   cat("\n\n")

@@ -1085,6 +1085,50 @@ get_metrics_data <- function(
 }
 
 
+#' get_milestone_summaries_from_indicator_variable_metrics
+#'
+#' @description Extracts milestone summaries for global, regional, and income group levels from indicator variable metrics.
+#' Returns a list containing global, regional, and income group milestone values.
+#'
+#' @param indicator_variable_metrics A data frame containing metrics for an indicator, including milestone values.
+#' Must contain columns `milestone_global`, `milestone_region`, and `milestone_income_group`.
+#' @param target_value (Optional) A numeric value representing the target milestone. Default: NA.
+#'
+#' @return A list with the a summary of global, regional, and income group milestones.
+#'
+#' @details
+#' - The global milestone is extracted as the first non-NA value from the `milestone_global` column.
+#' - Regional milestones are summarized by `region`, taking the first non-NA value per region.
+#' - Income group milestones are summarized by `income_group`, taking the first non-NA value per group and sorting them
+#'   by predefined levels: "Low income", "Lower middle income", "Upper middle income", "High income".
+#'
+#' @examples
+#' # Example usage:
+#' milestone_summaries <- get_milestone_summaries_from_indicator_variable_metrics(indicator_variable_metrics, target_value = 100)
+#' milestone_summaries$global  # Global milestone
+#' milestone_summaries$region  # Regional milestones
+#' milestone_summaries$income_group  # Income group milestones
+get_milestone_summaries_from_indicator_variable_metrics <- function(indicator_variable_metrics, target_value) {
+  global_milestone <- indicator_variable_metrics |> filter(!is.na(milestone_global)) |> pull(milestone_global) |> first()
+  region_milestones <- indicator_variable_metrics |> filter(!is.na(milestone_region)) |> group_by(region) |> summarise(milestone = first(milestone_region)) |> filter(!is.na(region))
+  income_group_milestones <- indicator_variable_metrics |> 
+    filter(!is.na(milestone_income_group)) |> 
+    group_by(income_group) |> 
+    summarise(milestone = first(milestone_income_group)) |> 
+    filter(!is.na(income_group)) |> 
+    mutate(
+      income_group = factor(income_group, levels = c("Low income", "Lower middle income", "Upper middle income", "High income")) # Define factor levels for sorting
+    ) |>
+    arrange(income_group)
+
+  list(
+    global = global_milestone,
+    region = region_milestones,
+    income_group = income_group_milestones
+  )
+}
+
+
 #' get_recent_data_values
 #'
 #' @description Extracts recent data values for each country, including the most recent year and value, 
@@ -1222,187 +1266,215 @@ get_regions <- function(data) {
 #'   income_group_col = "income_group"
 #' )
 get_summary_milestones <- function(indicator_variable_metrics, target_value = NA, region_col = "un_continental_group", income_group_col = "income_group") {
-  # Summarize milestones 
-  global_milestone <- indicator_variable_metrics |> filter(!is.na(milestone_global)) |> pull(milestone_global) |> first()
-   region_milestones <- indicator_variable_metrics |> filter(!is.na(milestone_region)) |> group_by(region) |> summarise(milestone = first(milestone_region)) |> filter(!is.na(region))
-   income_group_milestones <- indicator_variable_metrics |> 
-     filter(!is.na(milestone_income_group)) |> 
-     group_by(income_group) |> 
-     summarise(milestone = first(milestone_income_group)) |> 
-     filter(!is.na(income_group)) |> 
-     mutate(
-       income_group = factor(income_group, levels = c("Low income", "Lower middle income", "Upper middle income", "High income")) # Define factor levels for sorting
-     ) |>
-     arrange(income_group)
-
-   if(!is.na(target_value)) {
-     summary <- tibble(Group = "Target", Milestone = target_value)
-   } else {
-     summary <- tibble()
-   }
-   
-   # Get average values
-   global_avg_value <- indicator_variable_metrics |>
+  milestone_summaries <- get_milestone_summaries_from_indicator_variable_metrics(indicator_variable_metrics, target_value)
+  
+  global_milestone <- milestone_summaries$global
+  region_milestones <- milestone_summaries$region
+  income_group_milestones <- milestone_summaries$income_group
+  
+  # Scaffold out the summary table  
+  if(!is.na(target_value)) {
+    summary <- tibble(Group = "Target", Milestone = target_value)
+  } else {
+    summary <- tibble()
+  }
+ # Get average values
+ global_avg_value <- indicator_variable_metrics |>
+   filter(!is.na(latest_year_value)) |>
+   summarise(avg_value = mean(latest_year_value, na.rm = TRUE)) |>
+   pull(avg_value)
+ 
+ region_avg_values <- indicator_variable_metrics |>
+   filter(!is.na(latest_year_value)) |>
+   group_by(region) |>
+   summarise(avg_value = mean(latest_year_value, na.rm = TRUE)) |>
+   filter(!is.na(region)) |>
+   mutate(Group = paste0("Region: ", region)) |>
+   select(Group, avg_values_latest_year = avg_value)
+ 
+ income_group_avg_values <- indicator_variable_metrics |>
+   filter(!is.na(latest_year_value)) |>
+   group_by(income_group) |>
+   summarise(avg_value = mean(latest_year_value, na.rm = TRUE)) |>
+   filter(!is.na(income_group)) |>
+   mutate(
+     income_group = factor(income_group, levels = c("Low income", "Lower middle income", "Upper middle income", "High income")),
+     Group = paste0("Income Group: ", income_group)
+   ) |>
+   arrange(income_group) |>
+   select(Group, avg_values_latest_year = avg_value)
+ 
+ target_avg_value <- if (!is.na(target_value)) {
+   indicator_variable_metrics |>
      filter(!is.na(latest_year_value)) |>
      summarise(avg_value = mean(latest_year_value, na.rm = TRUE)) |>
      pull(avg_value)
-   
-   region_avg_values <- indicator_variable_metrics |>
-     filter(!is.na(latest_year_value)) |>
-     group_by(region) |>
-     summarise(avg_value = mean(latest_year_value, na.rm = TRUE)) |>
-     filter(!is.na(region)) |>
-     mutate(Group = paste0("Region: ", region)) |>
-     select(Group, avg_values_latest_year = avg_value)
-   
-   income_group_avg_values <- indicator_variable_metrics |>
-     filter(!is.na(latest_year_value)) |>
-     group_by(income_group) |>
-     summarise(avg_value = mean(latest_year_value, na.rm = TRUE)) |>
-     filter(!is.na(income_group)) |>
-     mutate(
-       income_group = factor(income_group, levels = c("Low income", "Lower middle income", "Upper middle income", "High income")),
-       Group = paste0("Income Group: ", income_group)
-     ) |>
-     arrange(income_group) |>
-     select(Group, avg_values_latest_year = avg_value)
-   
-   target_avg_value <- if (!is.na(target_value)) {
-     indicator_variable_metrics |>
-       filter(!is.na(latest_year_value)) |>
-       summarise(avg_value = mean(latest_year_value, na.rm = TRUE)) |>
-       pull(avg_value)
-   } else {
-     NA
-   }
-   
-   # Initial summary table
-   summary <- bind_rows(
-     summary,
-     tibble(Group = "Global", Milestone = global_milestone),
-     region_milestones |> 
-       mutate(Group = paste0("Region: ", region)) |> 
-       select(Group, Milestone = milestone),
-     income_group_milestones |> 
-       mutate(Group = paste0("Income Group: ", income_group)) |> 
-       select(Group, Milestone = milestone)
+ } else {
+   NA
+ }
+ 
+ # Initial summary table
+ summary <- bind_rows(
+   summary,
+   tibble(Group = "Global", Milestone = global_milestone),
+   region_milestones |> 
+     mutate(Group = paste0("Region: ", region)) |> 
+     select(Group, Milestone = milestone),
+   income_group_milestones |> 
+     mutate(Group = paste0("Income Group: ", income_group)) |> 
+     select(Group, Milestone = milestone)
+ ) |> 
+ left_join(
+   bind_rows(
+     tibble(Group = "Target", "avg_values_latest_year" = target_avg_value),
+     tibble(Group = "Global", "avg_values_latest_year" = global_avg_value),
+     region_avg_values,
+     income_group_avg_values
+   ),
+   by = "Group"
+ )
+ 
+ ## Summarize distances
+ # Global Average Distance
+ global_metrics <- indicator_variable_metrics |>
+   summarise(
+     avg_distance = mean(distance_to_milestone_global, na.rm = TRUE),
+     countries_total = n_distinct(country),
+     countries_missing = sum(is.na(distance_to_milestone_global)),
+     countries_contributing = countries_total - countries_missing
    ) |> 
+   select(avg_distance, countries_total, countries_contributing, countries_missing)
+ 
+ # Target Average Distance
+ target_metrics <- if (!is.na(target_value)) {
+   indicator_variable_metrics |>
+     summarise(
+       avg_distance = mean(distance_to_target, na.rm = TRUE),
+       countries_total = n_distinct(country),
+       countries_missing = sum(is.na(distance_to_target)),
+       countries_contributing = countries_total - countries_missing
+     ) |>
+     select(avg_distance, countries_total, countries_contributing, countries_missing)
+ } else {
+   tibble(
+     avg_distance = NA,
+     countries_total = n_distinct(indicator_variable_metrics$country),
+     countries_contributing = 0,
+     countries_missing = n_distinct(indicator_variable_metrics$country)
+   )
+ }
+ 
+ # Regional Average Distance
+ region_avg_distances <- indicator_variable_metrics |>
+   group_by(region) |>
+   summarise(
+     avg_distance = mean(distance_to_milestone_region, na.rm = TRUE),
+     countries_total = n_distinct(country),
+     countries_missing = sum(is.na(distance_to_milestone_region)),
+     countries_contributing = countries_total - countries_missing
+   ) |>
+   mutate(Group = paste0("Region: ", region)) |>
+   select(Group, avg_distance, countries_total, countries_contributing, countries_missing)
+ 
+ # Income Group Average Distance
+ income_group_avg_distances <- indicator_variable_metrics |>
+   group_by(income_group) |>
+   summarise(
+     avg_distance = mean(distance_to_milestone_income_group, na.rm = TRUE),
+     countries_total = n_distinct(country),
+     countries_missing = sum(is.na(distance_to_milestone_income_group)),
+     countries_contributing = countries_total - countries_missing
+   ) |>
+   mutate(Group = paste0("Income Group: ", income_group)) |>
+   filter(!is.na(income_group)) |>
+   select(Group, avg_distance, countries_total, countries_contributing, countries_missing)
+ 
+ # Add back in distances
+ summary |>
    left_join(
      bind_rows(
-       tibble(Group = "Target", "avg_values_latest_year" = target_avg_value),
-       tibble(Group = "Global", "avg_values_latest_year" = global_avg_value),
-       region_avg_values,
-       income_group_avg_values
+       tibble(
+         Group = "Target",
+         avg_distance = target_metrics$avg_distance,
+         countries_total = target_metrics$countries_total,
+         countries_contributing = target_metrics$countries_contributing,
+         countries_missing = target_metrics$countries_missing
+       ),
+       tibble(
+         Group = "Global",
+         avg_distance = global_metrics$avg_distance,
+         countries_total = global_metrics$countries_total,
+         countries_contributing = global_metrics$countries_contributing,
+         countries_missing = global_metrics$countries_missing
+       ),
+       region_avg_distances |>
+         select(Group, avg_distance, countries_total, countries_contributing, countries_missing),
+       income_group_avg_distances |>
+         select(Group, avg_distance, countries_total, countries_contributing, countries_missing)
      ),
      by = "Group"
+   ) |> 
+   mutate(
+     Milestone = round(Milestone, 2),
+     avg_values_latest_year = round(avg_values_latest_year, 2),
+     avg_distance = round(avg_distance, 2),
+     missing_pct = round(100 * countries_missing / countries_total, 1),
+   ) |> 
+   rename(
+     `Average Value (Latest Year)` = avg_values_latest_year,
+     `Average Distance To Target/Milestone` = avg_distance,
+     `Countries Total` = countries_total,
+     `Countries Contributing` = countries_contributing,
+     `Countries Missing` = countries_missing,
+     `Missing (%)` = missing_pct
    )
-   
-   ## Summarize distances
-   # Global Average Distance
-   global_metrics <- indicator_variable_metrics |>
-     summarise(
-       avg_distance = mean(distance_to_milestone_global, na.rm = TRUE),
-       countries_total = n_distinct(country),
-       countries_missing = sum(is.na(distance_to_milestone_global)),
-       countries_contributing = countries_total - countries_missing
-     ) |> 
-     select(avg_distance, countries_total, countries_contributing, countries_missing)
-   
-   # Target Average Distance
-   target_metrics <- if (!is.na(target_value)) {
-     indicator_variable_metrics |>
-       summarise(
-         avg_distance = mean(distance_to_target, na.rm = TRUE),
-         countries_total = n_distinct(country),
-         countries_missing = sum(is.na(distance_to_target)),
-         countries_contributing = countries_total - countries_missing
-       ) |>
-       select(avg_distance, countries_total, countries_contributing, countries_missing)
-   } else {
-     tibble(
-       avg_distance = NA,
-       countries_total = n_distinct(indicator_variable_metrics$country),
-       countries_contributing = 0,
-       countries_missing = n_distinct(indicator_variable_metrics$country)
-     )
-   }
-   
-   # Regional Average Distance
-   region_avg_distances <- indicator_variable_metrics |>
-     group_by(region) |>
-     summarise(
-       avg_distance = mean(distance_to_milestone_region, na.rm = TRUE),
-       countries_total = n_distinct(country),
-       countries_missing = sum(is.na(distance_to_milestone_region)),
-       countries_contributing = countries_total - countries_missing
-     ) |>
-     mutate(Group = paste0("Region: ", region)) |>
-     select(Group, avg_distance, countries_total, countries_contributing, countries_missing)
-   
-   # Income Group Average Distance
-   income_group_avg_distances <- indicator_variable_metrics |>
-     group_by(income_group) |>
-     summarise(
-       avg_distance = mean(distance_to_milestone_income_group, na.rm = TRUE),
-       countries_total = n_distinct(country),
-       countries_missing = sum(is.na(distance_to_milestone_income_group)),
-       countries_contributing = countries_total - countries_missing
-     ) |>
-     mutate(Group = paste0("Income Group: ", income_group)) |>
-     filter(!is.na(income_group)) |>
-     select(Group, avg_distance, countries_total, countries_contributing, countries_missing)
-   
-   # Add back in distances
-   summary <- summary |>
-     left_join(
-       bind_rows(
-         tibble(
-           Group = "Target",
-           avg_distance = target_metrics$avg_distance,
-           countries_total = target_metrics$countries_total,
-           countries_contributing = target_metrics$countries_contributing,
-           countries_missing = target_metrics$countries_missing
-         ),
-         tibble(
-           Group = "Global",
-           avg_distance = global_metrics$avg_distance,
-           countries_total = global_metrics$countries_total,
-           countries_contributing = global_metrics$countries_contributing,
-           countries_missing = global_metrics$countries_missing
-         ),
-         region_avg_distances |>
-           select(Group, avg_distance, countries_total, countries_contributing, countries_missing),
-         income_group_avg_distances |>
-           select(Group, avg_distance, countries_total, countries_contributing, countries_missing)
-       ),
-       by = "Group"
-     ) |> 
-     mutate(
-       Milestone = round(Milestone, 2),
-       avg_values_latest_year = round(avg_values_latest_year, 2),
-       avg_distance = round(avg_distance, 2),
-       missing_pct = round(100 * countries_missing / countries_total, 1),
-     ) |> 
-     rename(
-       `Average Value (Latest Year)` = avg_values_latest_year,
-       `Average Distance To Target/Milestone` = avg_distance,
-       `Countries Total` = countries_total,
-       `Countries Contributing` = countries_contributing,
-       `Countries Missing` = countries_missing,
-       `Missing (%)` = missing_pct
-     )
-   
-   return(summary)
 }
 
 
-get_summary_distances <- function(indicator_variable_metrics, target_value = NA, region_col = "un_continental_group", income_group_col = "income_group") {
-   
-}
-
-
+#' get_summary_velocities
+#'
+#' @description Computes and returns velocity summaries (CAGR and Linear Growth) for target, global, 
+#' regional, and income group milestones based on indicator metrics.
+#'
+#' @param indicator_variable_metrics A data frame containing metrics for an indicator, including milestone and velocity values.
+#' @param target_value (Optional) A numeric value representing the target to include in the velocity summaries. Default is `NA`.
+#' @param region_col The column name representing the region grouping (default: "un_continental_group").
+#' @param income_group_col The column name representing the income group grouping (default: "income_group").
+#'
+#' @return A list containing two tibbles:
+#' - `cagr`: Summary data for CAGR (Compound Annual Growth Rate) metrics.
+#' - `linear_growth`: Summary data for Linear Growth metrics.
+#'
+#' Each tibble contains the following columns:
+#' - `Group`: The category (Target, Global, Region, or Income Group).
+#' - `Milestone`: The milestone value for the group.
+#' - `Countries Included`: The number of countries included in the calculation.
+#' - `Avg Latest Value`: The average of the `latest_year_value`.
+#' - `Avg Growth Rate Required (From Latest Value)`: The average CAGR or Linear Growth to reach the milestone by 2030 using the latest year value.
+#' - `Avg Latest Value (3-Year Avg)`: The average of the `avg_value_last_three_years`.
+#' - `Avg Growth Rate (From 3-Year Avg)`: The average CAGR or Linear Growth to reach the milestone by 2030 using the 3-year average.
+#'
+#' @examples
+#' velocity_summaries <- get_summary_velocities(
+#'   indicator_variable_metrics,
+#'   target_value = 100,
+#'   region_col = "region",
+#'   income_group_col = "income_group"
+#' )
 get_summary_velocities <- function(indicator_variable_metrics, target_value = NA, region_col = "un_continental_group", income_group_col = "income_group") {
-   
+  milestone_summaries <- get_milestone_summaries_from_indicator_variable_metrics(indicator_variable_metrics, target_value)
+  
+  global_milestone <- milestone_summaries$global
+  region_milestones <- milestone_summaries$region
+  income_group_milestones <- milestone_summaries$income_group
+  
+  cagr_summaries <- get_velocity_summary_data(indicator_variable_metrics, milestone_summaries, "cagr")
+  linear_growth_summaries <- get_velocity_summary_data(indicator_variable_metrics, milestone_summaries, "linear")
+  
+  list(
+    cagr = cagr_summaries,
+    linear_growth = linear_growth_summaries
+  )
 }
 
 
@@ -1488,6 +1560,197 @@ get_target_value <- function(indicator_variable, target_data) {
 get_un_regions <- function(data) {
   region_col <- region_col <- get_region_col(data)
   data |> pull(!!sym(region_col)) |> as.character() |> sort() |> unique()
+}
+
+
+#' get_velocity_summary_data
+#'
+#' @description Prepares the summary data for velocity metrics (CAGR or Linear Growth) grouped by target, global,
+#' region, and income group milestones.
+#'
+#' @param indicator_variable_metrics A data frame containing metrics for an indicator, including milestone values.
+#' @param milestone_summaries A list of milestone summaries, including global, region, and income group milestones.
+#' @param growth_type A character string indicating the type of growth metric to calculate. Options are "cagr" or "linear".
+#'
+#' @return A tibble summarizing the growth metrics, including:
+#' - `Group`: The category (Target, Global, Region, or Income Group).
+#' - `Milestone`: The milestone value for the group.
+#' - `Countries Included`: The number of countries included in the calculation.
+#' - `Avg Latest Value`: The average of the `latest_year_value`.
+#' - `Avg Growth Rate Required (From Latest Value)`: The average growth rate (CAGR or Linear Growth) to reach the milestone by 2030 using the latest year value.
+#' - `Avg Latest Value (3-Year Avg)`: The average of the `avg_value_last_three_years`.
+#' - `Avg Growth Rate (From 3-Year Avg)`: The average growth rate (CAGR or Linear Growth) to reach the milestone by 2030 using the 3-year average.
+#'
+#' @examples
+#' summary_data <- get_velocity_summary_data(
+#'   indicator_variable_metrics,
+#'   milestone_summaries,
+#'   growth_type = "cagr"
+#' )
+get_velocity_summary_data <- function(indicator_variable_metrics, milestone_summaries, growth_type = "cagr") {
+  if (!growth_type %in% c("cagr", "linear")) {
+    stop("Invalid growth_type. Options are 'cagr' or 'linear'.")
+  }
+  
+  if (growth_type == "cagr") {
+    latest_year_col <- "from_latest_year_cagr_required_to_hit"
+    three_year_avg_col <- "from_mean_last_3_years_cagr_required_to_hit"
+  } else {
+    latest_year_col <- "from_latest_year_linear_growth_rate_required_to_hit"
+    three_year_avg_col <- "from_mean_last_3_years_linear_growth_rate_required_to_hit"
+  }
+  
+  # Target Data
+  target_data <- if (!is.na(milestone_summaries$global)) {
+    tibble(
+      Group = "Target",
+      Milestone = milestone_summaries$global,
+      `Countries Included` = indicator_variable_metrics |> 
+        filter(!is.na(!!sym(paste0(latest_year_col, "_target")))) |> 
+        summarise(countries_included = n_distinct(country)) |> 
+        pull(countries_included),
+      `Avg Latest Value` = indicator_variable_metrics |> 
+        summarise(avg_value = mean(latest_year_value, na.rm = TRUE)) |> 
+        pull(avg_value),
+      `Avg Growth Rate Required (From Latest Value)` = indicator_variable_metrics |> 
+        summarise(avg_growth = mean(!!sym(paste0(latest_year_col, "_target")), na.rm = TRUE)) |> 
+        pull(avg_growth),
+      `Avg Latest Value (3-Year Avg)` = indicator_variable_metrics |> 
+        summarise(avg_value = mean(avg_value_last_three_years, na.rm = TRUE)) |> 
+        pull(avg_value),
+      `Avg Growth Rate (From 3-Year Avg)` = indicator_variable_metrics |> 
+        summarise(avg_growth = mean(!!sym(paste0(three_year_avg_col, "_target")), na.rm = TRUE)) |> 
+        pull(avg_growth)
+    )
+  } else {
+    tibble()
+  }
+  
+  # Global Data
+  global_data <- tibble(
+    Group = "Global",
+    Milestone = milestone_summaries$global,
+    `Countries Included` = indicator_variable_metrics |> 
+      filter(!is.na(!!sym(paste0(latest_year_col, "_milestone_global")))) |> 
+      summarise(countries_included = n_distinct(country)) |> 
+      pull(countries_included),
+    `Avg Latest Value` = indicator_variable_metrics |> 
+      summarise(avg_value = mean(latest_year_value, na.rm = TRUE)) |> 
+      pull(avg_value),
+    `Avg Growth Rate Required (From Latest Value)` = indicator_variable_metrics |> 
+      summarise(avg_growth = mean(!!sym(paste0(latest_year_col, "_milestone_global")), na.rm = TRUE)) |> 
+      pull(avg_growth),
+    `Avg Latest Value (3-Year Avg)` = indicator_variable_metrics |> 
+      summarise(avg_value = mean(avg_value_last_three_years, na.rm = TRUE)) |> 
+      pull(avg_value),
+    `Avg Growth Rate (From 3-Year Avg)` = indicator_variable_metrics |> 
+      summarise(avg_growth = mean(!!sym(paste0(three_year_avg_col, "_milestone_global")), na.rm = TRUE)) |> 
+      pull(avg_growth)
+  )
+  
+  # Region data
+  region_data <- milestone_summaries$region |> 
+    mutate(region = as.character(region)) |>
+    mutate(
+      Group = paste0("Region: ", region),
+      Milestone = milestone,
+      `Avg Latest Value` = map_dbl(region, ~ {
+        filtered_data <- indicator_variable_metrics |> 
+          mutate(region = as.character(region)) |> 
+          filter(region == .x)
+        mean(filtered_data$latest_year_value, na.rm = TRUE)
+      }),
+      `Avg Growth Rate Required (From Latest Value)` = map_dbl(region, ~ {
+        filtered_data <- indicator_variable_metrics |> 
+          mutate(region = as.character(region)) |> 
+          filter(region == .x)
+        mean(filtered_data$from_latest_year_cagr_required_to_hit_milestone_region, na.rm = TRUE)
+      }),
+      `Avg Latest Value (3-Year Avg)` = map_dbl(region, ~ {
+        filtered_data <- indicator_variable_metrics |> 
+          mutate(region = as.character(region)) |> 
+          filter(region == .x)
+        mean(filtered_data$avg_value_last_three_years, na.rm = TRUE)
+      }),
+      `Avg Growth Rate (From 3-Year Avg)` = map_dbl(region, ~ {
+        filtered_data <- indicator_variable_metrics |> 
+          mutate(region = as.character(region)) |> 
+          filter(region == .x)
+        mean(filtered_data$from_mean_last_3_years_cagr_required_to_hit_milestone_region, na.rm = TRUE)
+      }),
+      `Countries Included` = map_dbl(region, ~ {
+        filtered_data <- indicator_variable_metrics |> 
+          mutate(region = as.character(region)) |> 
+          filter(region == .x)
+        n_distinct(filtered_data$country)
+      })
+    ) |> 
+    select(Group,
+       Milestone, 
+       `Countries Included`, 
+       `Avg Latest Value`, 
+       `Avg Growth Rate Required (From Latest Value)`, 
+       `Avg Latest Value (3-Year Avg)`, 
+       `Avg Growth Rate (From 3-Year Avg)`)
+  
+  # Income group
+  income_group_data <- milestone_summaries$income_group |> 
+    mutate(income_group = as.character(income_group)) |> 
+    mutate(
+      Group = paste0("Income Group: ", income_group),
+      Milestone = milestone,
+      `Avg Latest Value` = map_dbl(income_group, ~ {
+        filtered_data <- indicator_variable_metrics |> 
+          mutate(income_group = as.character(income_group)) |> 
+          filter(!is.na(income_group) & income_group == .x)
+        if (nrow(filtered_data) == 0) {
+          return(NA)
+        }
+        mean(filtered_data$latest_year_value, na.rm = TRUE)
+      }),
+      `Avg Growth Rate Required (From Latest Value)` = map_dbl(income_group, ~ {
+        filtered_data <- indicator_variable_metrics |> 
+          mutate(income_group = as.character(income_group)) |> 
+          filter(!is.na(income_group) & income_group == .x)
+        if (nrow(filtered_data) == 0) {
+          return(NA)
+        }
+        mean(filtered_data$from_latest_year_cagr_required_to_hit_milestone_income_group, na.rm = TRUE)
+      }),
+      `Avg Latest Value (3-Year Avg)` = map_dbl(income_group, ~ {
+        filtered_data <- indicator_variable_metrics |> 
+          mutate(income_group = as.character(income_group)) |> 
+          filter(!is.na(income_group) & income_group == .x)
+        if (nrow(filtered_data) == 0) {
+          return(NA)
+        }
+        mean(filtered_data$avg_value_last_three_years, na.rm = TRUE)
+      }),
+      `Avg Growth Rate (From 3-Year Avg)` = map_dbl(income_group, ~ {
+        filtered_data <- indicator_variable_metrics |> 
+          mutate(income_group = as.character(income_group)) |> 
+          filter(!is.na(income_group) & income_group == .x)
+        if (nrow(filtered_data) == 0) {
+          return(NA)
+        }
+        mean(filtered_data$from_mean_last_3_years_cagr_required_to_hit_milestone_income_group, na.rm = TRUE)
+      }),
+      `Countries Included` = map_dbl(income_group, ~ {
+        filtered_data <- indicator_variable_metrics |> 
+          mutate(income_group = as.character(income_group)) |> 
+          filter(!is.na(income_group) & income_group == .x)
+        n_distinct(filtered_data$country)
+      })
+    ) |> 
+    select(Group,
+           Milestone,
+           `Countries Included`,
+           `Avg Latest Value`,
+           `Avg Growth Rate Required (From Latest Value)`,
+           `Avg Latest Value (3-Year Avg)`,
+           `Avg Growth Rate (From 3-Year Avg)`)
+  
+  bind_rows(target_data, global_data, region_data, income_group_data)
 }
 
 
