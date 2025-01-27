@@ -188,7 +188,7 @@ calculate_milestones <- function(
     group_data() |> # Apply conditional grouping
     reframe(
       country = country,
-      milestone = quantile(!!sym(value_col), milestone_pctile, na.rm = TRUE, type = 2) # Calculate using correct milestone given desirability direction
+      milestone = quantile(!!sym(value_col), milestone_pctile, na.rm = TRUE) # Calculate using correct milestone given desirability direction
     ) |> 
     ungroup() |> 
     rename(variable = !!sym(variable_col), year = !!sym(year_col)) |> 
@@ -569,12 +569,154 @@ extract_target_data <- function(indicator_variable) {
 }
 
 
+#' generate_forest_plots
+#'
+#' @description Generates forest plots for visualizing milestone data by region or income group. 
+#' Each plot displays countries within the specified grouping variable, along with annotations 
+#' for global and group-specific milestone values.
+#'
+#' @param indicator_variable_metrics A data frame containing metrics for an indicator variable, 
+#'   including country, region, income group, and the latest year values.
+#' @param milestone_summary A data frame summarizing milestone information for global, regional, 
+#'   and income group milestones.
+#' @param unit A character string specifying the unit of measurement for the x-axis. Default is `"Value"`.
+#' @param group_by A character string specifying the grouping variable for the plots. 
+#'   Options are `"region"` or `"income_group"`. Default is `"region"`.
+#'
+#' @return A list of ggplot objects, where each plot corresponds to a specific region or income group.
+#'
+#' @examples
+#' # Generate forest plots by region
+#' plots_by_region <- generate_forest_plots(indicator_variable_metrics, milestone_summary, unit = "Percentage", group_by = "region")
+#'
+#' # Generate forest plots by income group
+#' plots_by_income <- generate_forest_plots(indicator_variable_metrics, milestone_summary, unit = "Percentage", group_by = "income_group")
+generate_forest_plots <- function(indicator_variable_metrics, milestone_summary, unit = "Value", group_by = "region") {
+  # Determine grouping variable
+  if (group_by == "region") {
+    group_prefix <- "Region: "
+    group_var <- "region"
+  } else if (group_by == "income_group") {
+    group_prefix <- "Income Group: "
+    group_var <- "income_group"
+  } else {
+    stop("Invalid group_by value. Use 'region' or 'income_group'.")
+  }
+  
+  desirable_direction = indicator_variable_metrics$desirable_direction |> first()
+  
+  # Extract groups
+  groups <- milestone_summary |>
+    filter(str_detect(Group, group_prefix)) |>
+    mutate(group = str_remove(Group, group_prefix)) |>
+    pull(group)
+  
+  # Initialize plots list
+  plots <- list()
+  
+  # Loop through each group
+  for (group in groups) {
+    # Filter data for the group
+    group_data <- indicator_variable_metrics |>
+      filter(!!sym(group_var) == !!group, !is.na(latest_year_value)) |>
+      mutate(
+        country = factor(
+          country,
+          levels = country[order(desirable_direction * latest_year_value)]
+        )
+      )
+    
+    # Add milestones as data points
+    global_milestone_value <- milestone_summary |> filter(Group == "Global") |> pull(Milestone)
+    group_milestone_value <- milestone_summary |>
+      filter(str_detect(Group, paste0(group_prefix, group))) |>
+      pull(Milestone)
+    
+    y_milestone_label <- if (group_by == "region") {
+      "Region Milestone"
+    } else {
+      "Income Group Milestone"
+    }
+    
+    milestone_data <- tibble(
+      country = c("Global Milestone", y_milestone_label),
+      latest_year_value = c(global_milestone_value, group_milestone_value),
+      desirable_direction = rep(desirable_direction, 2)
+    )
+    
+    # Combine and sort data
+    group_data <- bind_rows(group_data, milestone_data) |>
+      mutate(
+        country = factor(
+          country,
+          levels = unique(country[order(desirable_direction * latest_year_value)])
+        )
+      )
+    
+    # Calculate dynamic x-axis limits with padding
+    x_padding <- diff(range(group_data$latest_year_value, na.rm = TRUE)) * 0.025 # 5% of the range
+    
+                 
+    plot <- ggplot(group_data, aes(x = latest_year_value, y = country)) +
+      ggtitle(group) +
+      geom_segment(aes(x = 0, xend = latest_year_value, y = country, yend = country),
+                   color = "gray90", size = 0.3) +
+      annotate(
+        "text",
+        x = global_milestone_value + x_padding, # Add dynamic padding
+        y = "Global Milestone",
+        label = paste0(round(global_milestone_value, 1)),
+        color = "blue",
+        hjust = 0,
+        size = 3.5
+      ) +
+      annotate(
+        "text",
+        x = group_milestone_value + x_padding, # Add dynamic padding
+        y = paste0(y_milestone_label),
+        label = paste0(round(group_milestone_value, 1)),
+        color = "red",
+        hjust = 0,
+        size = 3.5
+      ) +
+      geom_point(aes(color = ifelse(
+        str_starts(country, "Global"), "blue",
+        ifelse(str_starts(country, y_milestone_label), "red", "gray")
+      )), size = 3) +
+      scale_x_continuous(expand = expansion(mult = c(0.05, 0.1))) +
+      scale_y_discrete(labels = function(x) {
+        ifelse(
+          str_starts(x, "Global"),
+          paste0("**<span style='color:blue;'>", x, "</span>**"),
+          ifelse(str_starts(x, y_milestone_label),
+                 paste0("**<span style='color:red;'>", x, "</span>**"), x)
+        )
+      }) +
+      scale_color_identity(guide = "none") +
+      labs(x = unit, y = "Country") +
+      theme_minimal() +
+      theme(
+        axis.text.y = element_markdown(size = 10),
+        axis.text.x = element_text(size = 10),
+        panel.grid.major.y = element_blank(),
+        panel.grid.minor.y = element_blank(),
+        plot.title = element_text(face = "bold", size = 14)
+      )
+    
+    # Add the plot to the list
+    plots[[group]] <- plot
+  }
+  
+  plots
+}
+
+
 #' get_analysis_data
 #'
 #' @description Processes raw input data for analysis by cleaning variable names, adding relevant columns, 
 #' and selecting only the necessary fields. This function prepares the data for downstream analysis.
 #'
-#' @param raw_data A data frame containing the raw data to be processed. The data must include columns for:
+#' @param raw_analysis_data A data frame containing the raw data to be processed. The data must include columns for:
 #'   - `country`: The country associated with the data point.
 #'   - `variable`: Variable names.
 #'   - `indicator`: A description of the indicator associated with the variable.
@@ -600,15 +742,16 @@ extract_target_data <- function(indicator_variable) {
 #' @examples
 #' # Prepare data for analysis
 #' analysis_data <- get_analysis_data(raw_data)
-get_analysis_data <- function(raw_data) {
-  raw_data |> 
+get_analysis_data <- function(raw_analysis_data) {
+  raw_analysis_data |> 
     mutate(
       variable = clean_analysis_data_variables(variable), # Cleans up a handful of minor issues from raw data
       un_continental_region = `UN Continental Region`,
+      desirable_direction = as.integer(as.character(desirable_direction)),
       milestone_pctile = if_else(desirable_direction == -1, 0.2, 0.8)
     ) |> 
     select(
-      country, variable, indicator, short_label, year, value, un_continental_region, income_group, desirable_direction, milestone_pctile
+      country, ISO3, variable, indicator, short_label, year, value, un_continental_region, income_group, desirable_direction, milestone_pctile
     )
 }
 
@@ -906,6 +1049,8 @@ get_indicator_variable_metrics <- function(
   indicator_variable_metrics <- tibble()
   milestone_summary <- tibble()
   velocity_summary <- tibble()
+  region_plots <- NA
+  income_group_plots <- NA
   
   indicator_summary_data <- indicator_summary |> filter(variable == indicator_variable)
   failing_variables <- list()
@@ -953,7 +1098,7 @@ get_indicator_variable_metrics <- function(
         
         country_region_income_group <- analysis_data |>
           filter(variable == indicator_variable) |>
-          select(country, all_of(c(region_col, income_group_col))) |>
+          select(country, ISO3, desirable_direction, milestone_pctile, all_of(c(region_col, income_group_col))) |>
           rename(
             region = !!region_col,
             income_group = !!income_group_col
@@ -963,13 +1108,21 @@ get_indicator_variable_metrics <- function(
         indicator_variable_metrics <- indicator_metrics_countries_with_data |> 
           bind_rows(countries_without_data) |> 
           left_join(country_region_income_group, by = "country") |>
-          select(variable, country, region, income_group, everything()) |>
+          select(variable, country, ISO3,  desirable_direction, milestone_pctile, region, income_group, everything()) |>
           arrange(country)
-        
+
         # Get summaries of these metrics by global, region, income group
         milestone_summary <- get_summary_milestones(indicator_variable_metrics, target_value, region_col, income_group_col)
         velocity_summary <- get_summary_velocities(indicator_variable_metrics, target_value, region_col, income_group_col)
 
+        # Visualize: this will be extracted
+        # Prepare the data
+        region_plots <- generate_forest_plots(indicator_variable_metrics, milestone_summary, unit = indicator_label, group_by = "region")
+        income_group_plots <- generate_forest_plots(indicator_variable_metrics, milestone_summary, unit = indicator_label, group_by = "income_group")
+        
+        save_forest_plots(region_plots, indicator_variable, "region")
+        save_forest_plots(income_group_plots, indicator_variable, "income_group")
+        
         message <- "Indicator variable successfully processed."
       },
       warning = function(w) {
@@ -991,6 +1144,10 @@ get_indicator_variable_metrics <- function(
     short_label = indicator_short_label,
     message = message,
     data = indicator_variable_metrics,
+    visualizations = list(
+      region = region_plots,
+      income_group = income_group_plots
+    ),
     summaries = list(
       indicators = indicator_summary_data,
       milestones = milestone_summary,
@@ -1781,6 +1938,48 @@ get_velocity_summary_data <- function(indicator_variable_metrics, milestone_summ
         ~ ifelse(is.na(.x) | is.nan(.x), "", as.character(.x))
       )
     )
+}
+
+
+#' save_forest_plots
+#'
+#' @description Saves a list of forest plots to PNG files, organized by variable names and grouping type (e.g., region or income group).
+#'
+#' @param plots A named list of ggplot objects, where each name corresponds to a region or income group.
+#' @param variable_name A character string specifying the name of the variable being plotted (used in file naming).
+#' @param group_by A character string indicating the grouping type, either `"region"` or `"income_group"`, used in file naming.
+#' @param output_dir A character string specifying the directory to save the plots. Default is `"output/images"`.
+#' @param width Numeric value specifying the width of the saved plot in inches. Default is `8`.
+#' @param height Numeric value specifying the height of the saved plot in inches. Default is `6`.
+#'
+#' @return None. Saves PNG files to the specified output directory.
+#'
+#' @examples
+#' # Save forest plots for "safeh20" by region
+#' save_forest_plots(plots_by_region, variable_name = "safeh20", group_by = "region")
+#'
+#' # Save forest plots for "safeh20" by income group
+#' save_forest_plots(plots_by_income, variable_name = "safeh20", group_by = "income_group")
+save_forest_plots <- function(plots, variable_name, group_by, output_dir = "output/images", width = 10, height = 8) {
+  # Create the output directory for the variable if it doesn't exist
+  variable_dir <- file.path(output_dir, variable_name)
+  if (!dir.exists(variable_dir)) {
+    dir.create(variable_dir, recursive = TRUE)
+  }
+  
+  # Save each plot
+  for (plot_name in names(plots)) {
+    file_name <- paste0(group_by, "_plot_", plot_name, ".png")
+    file_path <- file.path(variable_dir, file_name)
+    
+    ggsave(
+      filename = file_path,
+      plot = plots[[plot_name]],
+      width = width,
+      height = height,
+      units = "in"
+    )
+  }
 }
 
 

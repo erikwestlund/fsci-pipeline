@@ -18,6 +18,8 @@ editor_options:
 knitr::opts_chunk$set(echo = TRUE)
 
 library(dplyr)
+library(ggplot2)
+library(ggtext)
 library(purrr)
 library(readr)
 library(readxl)
@@ -29,7 +31,7 @@ library(kableExtra)
 library(DT)
 
 include_data <- TRUE
-use_cached_metrics <- TRUE
+use_cached_metrics <- FALSE
 
 ```
 
@@ -71,6 +73,7 @@ country_indicator_summary |>
 
 The below table shows the number of non-missing indicators a country has in each year.
 <br><br>
+
 ```{r country_indicators, echo=FALSE, message=FALSE}
 DT::datatable(country_indicator_summary, rownames = FALSE, options = list(pageLength = 20, scrollX = TRUE))
 ```
@@ -127,7 +130,7 @@ DT::datatable(indicator_summary, rownames = FALSE, options = list(pageLength = 6
 
 # Metrics
 
-```{r calculate_metrics, echo=FALSE, message=FALSE, results='asis'}
+```{r calculate_metrics, echo=FALSE, message=FALSE, results='asis', fig.width = 12, fig.height = 10}
 
 metrics_data <- if(use_cached_metrics) {
   readRDS("output/metrics_data.rds")
@@ -140,6 +143,8 @@ metrics_data <- if(use_cached_metrics) {
 # variable_to_test <- 'safeh20'
 # list_index <- which(sapply(metrics_data, function(x) x$variable) == variable_to_test)
 # indicator_variable_metrics <- metrics_data[[list_index]]
+# 
+# take only 5 for speedier
 for(indicator_variable_metrics in metrics_data) {
   cat(paste0("## ", indicator_variable_metrics$variable, ": ", indicator_variable_metrics$short_label , "\n\n"))
 
@@ -157,49 +162,67 @@ for(indicator_variable_metrics in metrics_data) {
   cat("### Data Summary\n\n")
   summarize_indicator_summary(indicator_summary) |> kable() |> print()
 
-  cat("### Milestone Metrics Summary\n\n")
-  
-  cat("Note that `value` is subtracted from milestone/targets, so a positive value indicates the milestone/target has not been met, while a negative value indicates the milestone/target has been exceeded.\n\n")
   
   if (indicator_variable_metrics$meta$data_type == "numeric") {
+    cat("### Milestone Metrics Summary\n\n")
+    cat("Note that `value` is subtracted from milestone/targets.\n\n")
     milestone_summary |> kable() |> print()
-  } else if(indicator_variable_metrics$meta$data_type == "character") {
-    cat("Data type is `character`. No distance metrics available.\n\n")
-  } else if(indicator_variable_metrics$meta$data_type == "boolean") {
-    cat("Data type is `boolean`. No distance metrics available.\n\n")
-  }
-
-  cat("### Velocity Metrics Summary {.tabset}\n\n")
   
-  cat("Growth rates are reported in percents. Note that CAGRs cannot be calculated for values where the starting or ending value is 0.\n\n")
-
+    
+    cat("### Metrics Visualization {.tabset} \n\n")
+    
+    cat("#### Region\n\n")  
+    
+    if (!is.null(indicator_variable_metrics$visualizations$region)) {
+      for (visual in indicator_variable_metrics$visualizations$region) {
+        if (!is.null(visual)) {
+          print(visual)
+        }
+      }
+    }
+    
+    cat("\n\n")
+    
+    
+    cat("#### Income Group\n\n")  
+    
+        if (!is.null(indicator_variable_metrics$visualizations$income_group)) {
+      for (visual in indicator_variable_metrics$visualizations$income_group) {
+        if (!is.null(visual)) {
+          print(visual)
+        }
+      }
+    }
+    
+    cat("\n\n")
+    
+ 
+    cat("### Velocity Metrics Summary {.tabset}\n\n")
   
-  if (indicator_variable_metrics$meta$data_type == "numeric") {
+    cat("Growth rates are reported in percents. Note that CAGRs cannot be calculated for values where the starting or ending value is 0.\n\n")
+
     cat("#### CAGR\n\n")
     velocity_summary$cagr |> kable() |> print()
     cat("#### Linear Growth\n\n")
     velocity_summary$linear |> kable() |> print()
-  } else if(indicator_variable_metrics$meta$data_type == "character") {
-    cat("Data type is `character`. No distance metrics available.\n\n")
-  } else if(indicator_variable_metrics$meta$data_type == "boolean") {
-    cat("Data type is `boolean`. No distance metrics available.\n\n")
-  }
-
-  cat("### Data\n\n")
   
-  if(include_data) {
-    cat(DT::datatable(
-            indicator_variable_metrics$data,
-            rownames = FALSE,
-            options = list(pageLength = 20, scrollX = TRUE)
-          ) |> 
-            htmltools::as.tags() |> 
-            as.character())
+    cat("### Metrics Data\n\n")
+    
+    if(include_data) {
+      cat(DT::datatable(
+              indicator_variable_metrics$data,
+              rownames = FALSE,
+              options = list(pageLength = 20, scrollX = TRUE)
+            ) |> 
+              htmltools::as.tags() |> 
+              as.character())
+    } else {
+      cat("Data not shown. Set `include_data = TRUE` in the notebook set up to include data.\n\n")
+    }
   } else {
-    cat("Data not shown. Set `include_data = TRUE` in the notebook set up to include data.\n\n")
+    cat("This variable is not numeric. No milestone or velocity metrics are available.\n\n")
   }
   
-
   cat("\n\n")
   cat("---")
   cat("\n\n")
