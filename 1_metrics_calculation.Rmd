@@ -18,6 +18,7 @@ editor_options:
 knitr::opts_chunk$set(echo = TRUE)
 
 library(dplyr)
+library(forcats)
 library(ggplot2)
 library(ggtext)
 library(purrr)
@@ -30,8 +31,24 @@ library(rlang)
 library(kableExtra)
 library(DT)
 
+# Toggle true to include data frames of metrics for each indicator in the output
 include_data <- TRUE
+
+# Toggle true to limit the run to the indicators in the below `indicators_to_debug` vector
+debug_limited_set <- FALSE
+
+# Toggle true to skip data processing and read in data in the `output` directory from the last full run
 use_cached_metrics <- FALSE
+
+# Debug options
+indicators_to_debug <- c(
+  'safeh20',
+  'childlabor',
+  'croplandchange',
+  'emint_beef',
+  'mufppurbshare',
+  'pesticides'
+)
 
 ```
 
@@ -134,17 +151,23 @@ DT::datatable(indicator_summary, rownames = FALSE, options = list(pageLength = 6
 
 metrics_data <- if(use_cached_metrics) {
   readRDS("output/metrics_data.rds")
+} else if(debug_limited_set) {
+  limited_raw_analysis_data <- raw_analysis_data |> filter(variable %in% indicators_to_debug)
+  get_metrics_data(limited_raw_analysis_data, indicator_summary, raw_target_data, target_year, data_patches)
 } else {
   get_metrics_data(raw_analysis_data, indicator_summary, raw_target_data, target_year, data_patches)
 }
 
-# Debug:
+# Debug: set variables in intro block to debug_limited_set = TRUE and indicators_to_debug to debug
+if(debug_limited_set) {
+  debug_indices <- which(sapply(metrics_data, function(x) x$variable) %in% indicators_to_debug)
+  metrics_data <- sapply(debug_indices, function(i) metrics_data[[i]], simplify = FALSE)
+}
+
+# Debug: quickly set a variable to test inside the loop manually
 # variable_to_test <- 'childlabor'
-# variable_to_test <- 'safeh20'
 # list_index <- which(sapply(metrics_data, function(x) x$variable) == variable_to_test)
 # indicator_variable_metrics <- metrics_data[[list_index]]
-# 
-# take only 5 for speedier
 for(indicator_variable_metrics in metrics_data) {
   cat(paste0("## ", indicator_variable_metrics$variable, ": ", indicator_variable_metrics$short_label , "\n\n"))
 
@@ -168,9 +191,7 @@ for(indicator_variable_metrics in metrics_data) {
     cat("Note that `value` is subtracted from milestone/targets.\n\n")
     milestone_summary |> kable() |> print()
   
-    
     cat("### Metrics Visualization {.tabset} \n\n")
-    
     cat("#### Region\n\n")  
     
     if (!is.null(indicator_variable_metrics$visualizations$region)) {
@@ -206,6 +227,17 @@ for(indicator_variable_metrics in metrics_data) {
     cat("#### Linear Growth\n\n")
     velocity_summary$linear |> kable() |> print()
   
+    cat("### Min/Max Indices\n\n")
+
+    cat("Notes: \n\n")
+    cat("1. The `Min-Max` index is calculated as `(weighted_mean_group - min_global) / (max_global - min_global) and is restricted to values from 0-1`.\n")
+    cat("2. The `Min-Max Mean-Scaled` index is calculated as `(weighted_mean_group - weighted_mean_global) / (max_global - min_global)`. Negative numbers are `bad` while positive ones are `good`.\n")
+    cat("(2) differs slightly from the original formula in the paper, which uses the group minima/maxima.\n\n")
+    
+    minmax_summary <- summarize_standardized_distance_metrics(indicator_variable_metrics$standardized_distance_metrics)
+    
+    minmax_summary$latest_year |> kable() |> print()
+    
     cat("### Metrics Data\n\n")
     
     if(include_data) {
@@ -239,13 +271,18 @@ Two files have been saved to the `output` folder:
 
 ```{r save_output, echo=FALSE}       
 
-combined_data <- map_dfr(
-  metrics_data,
-  ~ .x$data,
-  .id = "variable"
-)
+if(! debug_limited_set) {
+  combined_data <- map_dfr(
+    metrics_data,
+    ~ .x$data,
+    .id = "variable"
+  )
+  
+  saveRDS(metrics_data, "output/metrics_data.rds")
+  saveRDS(combined_data, "output/metrics_combined_dataframe.rds")
+} else {
+  print("Debugging limited set. Not saving output.")
+}
 
-saveRDS(metrics_data, "output/metrics_data.rds")
-saveRDS(combined_data, "output/metrics_combined_dataframe.rds")
 
 ```

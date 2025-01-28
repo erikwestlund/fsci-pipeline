@@ -196,6 +196,199 @@ calculate_milestones <- function(
 }
 
 
+#' calculate_standardized_distance_metrics
+#'
+#' @description Computes standardized distance metrics for indicators based on global, regional, and income group summaries. 
+#' The function calculates weighted means, percentiles, and min-max scaled values for comparisons, allowing for desirable direction adjustments.
+#'
+#' @param indicator_data A data frame containing the data for analysis. Must include the columns specified in other parameters.
+#' @param region_col The column name representing the region grouping (default: `"un_continental_region"`).
+#' @param income_group_col The column name representing the income group (default: `"income_group"`).
+#' @param weight_col The column name representing the weights for calculating weighted means (default: `"weight"`).
+#' @param variable_col The column name representing the variable/indicator (default: `"variable"`).
+#' @param year_col The column name representing the year (default: `"year"`).
+#' @param value_col The column name representing the indicator value (default: `"value"`).
+#'
+#' @return A list of three data frames:
+#' - `global`: Global summary metrics, including weighted means, percentiles, and min-max scaled values.
+#' - `region`: Regional summary metrics, including weighted means and min-max scaled values for each region.
+#' - `income_group`: Income group summary metrics, including weighted means and min-max scaled values for each income group.
+#'
+#' @examples
+#' # Example: Calculate standardized metrics for global, regional, and income group comparisons
+#' standardized_metrics <- calculate_standardized_distance_metrics(
+#'   indicator_data = analysis_data,
+#'   region_col = "un_continental_region",
+#'   income_group_col = "income_group",
+#'   weight_col = "weight",
+#'   variable_col = "variable",
+#'   year_col = "year",
+#'   value_col = "value"
+#' )
+#'
+#' # Access the global summary
+#' global_metrics <- standardized_metrics$global
+#'
+#' # Access the regional summary
+#' regional_metrics <- standardized_metrics$region
+#'
+#' # Access the income group summary
+#' income_group_metrics <- standardized_metrics$income_group
+calculate_standardized_distance_metrics <- function(
+  indicator_data,
+  region_col = "un_continental_region",
+  income_group_col = "income_group",
+  weight_col = "weight",
+  variable_col = "variable",
+  year_col = "year",
+  value_col = "value"
+) {
+  desirable_direction <- indicator_data |> pull(desirable_direction) |> first() 
+  
+  # First, we need to calculate weighted means for global and grouped by region and income group
+  # Then, we need global distance and regional/income group distance
+  # Then we need a -1 to 1 standardization in the dirction of the desirable direction
+  weighted_mean_data <- indicator_data  |> 
+    filter(! is.na(!!sym(value_col)) & ! is.na(!!sym(weight_col))) |>
+    # Calculate weighted means
+    group_by(!!sym(year_col)) |>
+    mutate(
+      mean_global = mean(!!sym(value_col), na.rm = TRUE),
+      p25_global = quantile(!!sym(value_col), 0.25, na.rm = TRUE),
+      median_global = quantile(!!sym(value_col), 0.50, na.rm = TRUE),
+      p75_global = quantile(!!sym(value_col), 0.75, na.rm = TRUE),
+      weighted_mean_global = weighted.mean(!!sym(value_col), w = !!sym(weight_col), na.rm = TRUE),
+      min_global = min(!!sym(value_col), na.rm = TRUE),
+      max_global = max(!!sym(value_col), na.rm = TRUE)
+    ) |> 
+    ungroup() |> 
+    group_by(!!sym(region_col), !!sym(year_col)) |>
+    mutate(
+      mean_region = mean(!!sym(value_col), na.rm = TRUE),
+      p25_region = quantile(!!sym(value_col), 0.25, na.rm = TRUE),
+      median_region = quantile(!!sym(value_col), 0.50, na.rm = TRUE),
+      p75_region = quantile(!!sym(value_col), 0.75, na.rm = TRUE),
+      weighted_mean_region = weighted.mean(!!sym(value_col), w = !!sym(weight_col), na.rm = TRUE),
+      min_region = min(!!sym(value_col), na.rm = TRUE),
+      max_region = max(!!sym(value_col), na.rm = TRUE)
+    ) |>
+    ungroup() |> 
+    group_by(!!sym(income_group_col), !!sym(year_col)) |>
+    mutate(
+      mean_income_group = mean(!!sym(value_col), na.rm = TRUE),
+      p25_income_group = quantile(!!sym(value_col), 0.25, na.rm = TRUE),
+      median_income_group = quantile(!!sym(value_col), 0.50, na.rm = TRUE),
+      p75_income_group = quantile(!!sym(value_col), 0.75, na.rm = TRUE),
+      weighted_mean_income_group = weighted.mean(!!sym(value_col), w = !!sym(weight_col), na.rm = TRUE),
+      min_income_group = min(!!sym(value_col), na.rm = TRUE),
+      max_income_group = max(!!sym(value_col), na.rm = TRUE)
+    ) |> 
+    ungroup() |> 
+    select(country, !!sym(year_col), mean_global, weighted_mean_global, p25_global, median_global, p75_global, min_global, max_global, mean_region, weighted_mean_region, median_region, p25_region, p75_region, min_region, max_region, mean_income_group, weighted_mean_income_group, p25_income_group, median_income_group, p75_income_group,  min_income_group, max_income_group)
+  
+  reference_data <- indicator_data |> 
+    left_join(weighted_mean_data, by = c("country", year_col)) 
+  
+  global_summary <- reference_data |>
+    filter(!is.na(weighted_mean_global) & !is.na(mean_global)) |>
+    group_by(year) |> 
+    mutate(
+      min_max_scaled_wtd = (weighted_mean_global - min_global) / (max_global - min_global),
+      min_max_mean_scaled_wtd = desirable_direction * (weighted_mean_global - weighted_mean_global) / (max_global - min_global)
+    ) |> 
+    summarise(
+      min_max_scaled_wtd = mean(min_max_scaled_wtd, na.rm = TRUE),
+      min_max_mean_scaled_wtd = mean(min_max_mean_scaled_wtd, na.rm = TRUE),
+      mean_global = first(mean_global),
+      weighted_mean_global = first(weighted_mean_global),
+      min_global = first(min_global),
+      max_global = first(max_global),
+      p25_global = first(p25_global),
+      median_global = first(median_global),
+      p75_global = first(p75_global),
+      .groups = "drop"
+    ) |> 
+    filter(
+      !is.na(min_max_scaled_wtd & !is.na(min_max_mean_scaled_wtd)) & !is.nan(min_max_scaled_wtd) & !is.nan(min_max_mean_scaled_wtd)
+    ) |> 
+    select(
+      year, min_max_scaled_wtd, everything()
+    )
+  
+  region_summary <- reference_data |>
+    filter(!is.na(weighted_mean_region) & !is.na(mean_global)) |> 
+    group_by(!!sym(region_col), year) |>
+    mutate(
+      min_max_scaled_region_vs_global_wtd = (weighted_mean_region - min_global) / (max_global - min_global),
+      min_max_mean_scaled_region_vs_global_wtd = desirable_direction * (weighted_mean_region - weighted_mean_global) / (max_global - min_global)
+    ) |> 
+    summarise(
+      min_max_scaled_region_vs_global_wtd = first(min_max_scaled_region_vs_global_wtd),
+      min_max_mean_scaled_region_vs_global_wtd = first(min_max_mean_scaled_region_vs_global_wtd),
+      mean_global = first(mean_global),
+      weighted_mean_global = first(weighted_mean_global),
+      mean_region = first(mean_region),
+      weighted_mean_region = first(weighted_mean_region),
+      min_global = first(min_global),
+      max_global = first(max_global),
+      min_region = first(min_region),
+      max_region = first(max_region),
+      p25_region = first(p25_region),
+      median_region = first(median_region),
+      p75_region = first(p75_region),
+      .groups = "drop"
+    )|> 
+    rename(
+      region = !!sym(region_col)
+    ) |> 
+    filter(
+      !is.na(min_max_scaled_region_vs_global_wtd & !is.na(min_max_mean_scaled_region_vs_global_wtd)) & !is.nan(min_max_scaled_region_vs_global_wtd) & !is.nan(min_max_mean_scaled_region_vs_global_wtd)
+    ) |>
+    select(
+      year, region, min_max_scaled_region_vs_global_wtd, min_max_mean_scaled_region_vs_global_wtd, everything()
+    )
+  
+  income_group_summary <- reference_data |>
+    filter(!is.na(weighted_mean_income_group) & !is.na(mean_global)) |>
+    group_by(!!sym(income_group_col), year) |>
+    mutate(
+      min_max_scaled_income_group_wtd = (weighted_mean_income_group - min_global) / (max_global - min_global),
+      min_max_mean_scaled_income_group_wtd = desirable_direction * (weighted_mean_income_group - weighted_mean_global) / (max_global - min_global)
+    ) |>
+    summarise(
+      min_max_scaled_income_group_wtd = first(min_max_scaled_income_group_wtd),
+      min_max_mean_scaled_income_group_wtd = first(min_max_mean_scaled_income_group_wtd),
+      mean_global = first(mean_global),
+      weighted_mean_global = first(weighted_mean_global),
+      mean_income_group = first(mean_income_group),
+      weighted_mean_income_group = first(weighted_mean_income_group),
+      min_global = first(min_global),
+      max_global = first(max_global),
+      min_income_group = first(min_income_group),
+      max_income_group = first(max_income_group),
+      p25_income_group = first(p25_income_group),
+      median_income_group = first(median_income_group),
+      p75_income_group = first(p75_income_group),
+      .groups = "drop"
+    )  |> 
+    rename(
+      income_group = !!sym(income_group_col)
+    )  |> 
+    filter(
+      !is.na(min_max_scaled_income_group_wtd & !is.na(min_max_mean_scaled_income_group_wtd)) & !is.nan(min_max_scaled_income_group_wtd) & !is.nan(min_max_mean_scaled_income_group_wtd)
+    ) |>
+    select(
+      year, income_group, min_max_scaled_income_group_wtd, min_max_mean_scaled_income_group_wtd, everything()
+    )
+  
+  list(
+    global = global_summary,
+    region = region_summary,
+    income_group = income_group_summary
+  )
+}
+
+
 #' calculate_velocity_cagr_required_to_hit_target_value_by_target_year
 #'
 #' @description Calculates the compound annual growth rate (CAGR) required to reach a target value from a starting value 
@@ -605,6 +798,16 @@ generate_forest_plots <- function(indicator_variable_metrics, milestone_summary,
   
   desirable_direction = indicator_variable_metrics$desirable_direction |> first()
   
+  # Get target value if it's in milestone_summary
+  target_value <- milestone_summary |> 
+    filter(Group == "Target") |> 
+    pull(Milestone) |> 
+    as.numeric()
+  
+  if(length(target_value) == 0) {
+    target_value <- NA
+  }
+  
   # Extract groups
   groups <- milestone_summary |>
     filter(str_detect(Group, group_prefix)) |>
@@ -638,10 +841,22 @@ generate_forest_plots <- function(indicator_variable_metrics, milestone_summary,
       "Income Group Milestone"
     }
     
+    milestones_to_summarize <- if(!is.na(target_value)) {
+      c("Target", "Global Milestone", y_milestone_label)
+    } else {
+      c("Global Milestone", y_milestone_label)
+    }
+    
+    latest_year_values <- if(!is.na(target_value)) {
+      c(target_value, global_milestone_value, group_milestone_value)
+    } else {
+      c(global_milestone_value, group_milestone_value)
+    }
+    
     milestone_data <- tibble(
-      country = c("Global Milestone", y_milestone_label),
-      latest_year_value = c(global_milestone_value, group_milestone_value),
-      desirable_direction = rep(desirable_direction, 2)
+      country = milestones_to_summarize,
+      latest_year_value = latest_year_values,
+      desirable_direction = rep(desirable_direction, length(milestones_to_summarize))
     )
     
     # Combine and sort data
@@ -655,15 +870,27 @@ generate_forest_plots <- function(indicator_variable_metrics, milestone_summary,
     
     # Calculate dynamic x-axis limits with padding
     x_padding <- diff(range(group_data$latest_year_value, na.rm = TRUE)) * 0.025 # 5% of the range
-    
                  
     plot <- ggplot(group_data, aes(x = latest_year_value, y = country)) +
       ggtitle(group) +
       geom_segment(aes(x = 0, xend = latest_year_value, y = country, yend = country),
-                   color = "gray90", size = 0.3) +
-      annotate(
+                   color = "gray90", size = 0.3)
+      
+    if(!is.na(target_value)) {
+      plot <- plot + annotate(
         "text",
-        x = global_milestone_value + x_padding, # Add dynamic padding
+        x = target_value + x_padding, 
+        y = "Target",
+        label = paste0(round(target_value, 1)),
+        color = "darkgreen",
+        hjust = 0,
+        size = 3.5
+      )
+    }
+      
+    plot <- plot + annotate(
+        "text",
+        x = global_milestone_value + x_padding, 
         y = "Global Milestone",
         label = paste0(round(global_milestone_value, 1)),
         color = "blue",
@@ -679,17 +906,19 @@ generate_forest_plots <- function(indicator_variable_metrics, milestone_summary,
         hjust = 0,
         size = 3.5
       ) +
-      geom_point(aes(color = ifelse(
-        str_starts(country, "Global"), "blue",
-        ifelse(str_starts(country, y_milestone_label), "red", "gray")
+      geom_point(aes(color = case_when(
+        str_starts(country, "Global") ~ "blue",
+        str_starts(country, y_milestone_label) ~ "red",
+        str_starts(country, "Target") ~ "darkgreen",
+        TRUE ~ "gray"
       )), size = 3) +
       scale_x_continuous(expand = expansion(mult = c(0.05, 0.1))) +
       scale_y_discrete(labels = function(x) {
-        ifelse(
-          str_starts(x, "Global"),
-          paste0("**<span style='color:blue;'>", x, "</span>**"),
-          ifelse(str_starts(x, y_milestone_label),
-                 paste0("**<span style='color:red;'>", x, "</span>**"), x)
+        case_when(
+          str_starts(x, "Global") ~ paste0("**<span style='color:blue;'>", x, "</span>**"),
+          str_starts(x, y_milestone_label) ~ paste0("**<span style='color:red;'>", x, "</span>**"),
+          str_starts(x, "Target") ~ paste0("**<span style='color:darkgreen;'>", x, "</span>**"),
+          TRUE ~ x
         )
       }) +
       scale_color_identity(guide = "none") +
@@ -729,6 +958,7 @@ generate_forest_plots <- function(indicator_variable_metrics, milestone_summary,
 #'
 #' @return A cleaned and processed data frame with the following columns:
 #'   - `country`: The country associated with the data point.
+#'   - `ISO3`: The ISO3 code for the country.
 #'   - `variable`: Cleaned variable names.
 #'   - `indicator`: Indicator associated with the variable.
 #'   - `short_label`: Short label for the variable.
@@ -738,6 +968,7 @@ generate_forest_plots <- function(indicator_variable_metrics, milestone_summary,
 #'   - `income_group`: Income group classification for the country.
 #'   - `desirable_direction`: Indicates whether increasing or decreasing is desirable.
 #'   - `milestone_pctile`: Percentile used for milestone calculation (0.2 if decreasing is desirable, otherwise 0.8).
+#'   - `weight`: Weight for the data point.
 #'
 #' @examples
 #' # Prepare data for analysis
@@ -751,7 +982,7 @@ get_analysis_data <- function(raw_analysis_data) {
       milestone_pctile = if_else(desirable_direction == -1, 0.2, 0.8)
     ) |> 
     select(
-      country, ISO3, variable, indicator, short_label, year, value, un_continental_region, income_group, desirable_direction, milestone_pctile
+      country, ISO3, variable, indicator, short_label, year, value, un_continental_region, income_group, desirable_direction, milestone_pctile, weight
     )
 }
 
@@ -1044,8 +1275,11 @@ get_indicator_variable_metrics <- function(
   target_year,
   data_patches
 ) {
+  # Debug:
+  # indicator_variable <- "safeh20"
   region_col <- get_region_col(analysis_data)
   income_group_col <- get_income_group_col(analysis_data)
+  weight_col <- get_weight_col()
   indicator_variable_metrics <- tibble()
   milestone_summary <- tibble()
   velocity_summary <- tibble()
@@ -1070,6 +1304,7 @@ get_indicator_variable_metrics <- function(
         target_value <- get_target_value(indicator_variable, target_data)
         indicator_milestone_metrics <- calculate_milestone_metrics(indicator_data) # All years for milestones
         indicator_distance_metrics <- calculate_distance_metrics(indicator_data, indicator_milestone_metrics, target_value)
+        indicator_standardized_distance_metrics <- calculate_standardized_distance_metrics(indicator_data, region_col, income_group_col, weight_col)
         indicator_velocity_metrics <- calculate_velocity_metrics(indicator_data, indicator_milestone_metrics, target_value, target_year)
         
         indicator_metrics_countries_with_data <- indicator_milestone_metrics |> 
@@ -1153,6 +1388,7 @@ get_indicator_variable_metrics <- function(
       milestones = milestone_summary,
       velocities = velocity_summary
     ),
+    standardized_distance_metrics = indicator_standardized_distance_metrics,
     meta = list(
       data_type = data_type,
       milestone_summary = milestone_summary,
@@ -1940,6 +2176,12 @@ get_velocity_summary_data <- function(indicator_variable_metrics, milestone_summ
     )
 }
 
+#' get_weight_col
+#' 
+#' @description Returns the name of the column in the data frame that contains weights. This is defensive so we can change the column name in one place.
+get_weight_col <- function() {
+  'weight'
+}
 
 #' save_forest_plots
 #'
@@ -2098,6 +2340,31 @@ summarize_metrics_collection <- function(indicator_variable_metrics) {
   )
 }
 
+#' summarize_metrics_milestones
+#'
+#' @description Summarizes key milestone metrics for a given indicator, region, and income group. 
+#' Extracts milestone values and compiles them into a structured tibble for reporting or further analysis.
+#'
+#' @param indicator_variable_metrics A list or data frame containing metrics for the specified indicator. 
+#' Must include a `milestones` element with milestone values.
+#' @param region_summary (Optional) A summary of regional metrics, used for context or additional milestone calculations.
+#' @param income_group_summary (Optional) A summary of income group metrics, used for context or additional milestone calculations.
+#'
+#' @return A tibble containing two columns:
+#' - `Key`: The label of the milestone (e.g., "Global Milestone", "Milestone 2", etc.).
+#' - `Value`: The milestone value extracted from `indicator_variable_metrics$milestones`.
+#'
+#' @examples
+#' # Example usage
+#' milestone_summary <- summarize_metrics_milestones(
+#'   indicator_variable_metrics = list(
+#'     milestones = c(0.1, 0.25, 0.5, 0.75, 0.9)
+#'   ),
+#'   region_summary = region_metrics,
+#'   income_group_summary = income_group_metrics
+#' )
+#'
+#' print(milestone_summary)
 summarize_metrics_milestones <- function(indicator_variable_metrics, region_summary, income_group_summary) {
   tibble(
     Key = c("Global Milestone", "Milestone 2", "Milestone 3", "Milestone 4", "Milestone 5"),
@@ -2108,5 +2375,85 @@ summarize_metrics_milestones <- function(indicator_variable_metrics, region_summ
       safe_summary_value(indicator_variable_metrics$milestones[4]), 
       safe_summary_value(indicator_variable_metrics$milestones[5])
     )
+  )
+}
+
+
+#' summarize_standardized_distance_metrics
+#'
+#' @description Summarizes standardized distance metrics for an indicator by combining global, regional, and income group-level metrics. 
+#' Provides a consolidated dataset and highlights the metrics for the latest year.
+#'
+#' @param indicator_standardized_distance_metrics A list containing standardized distance metrics for global, region, and income group levels.
+#' Each element of the list should be a data frame with standardized distance metrics.
+#'
+#' @return A list containing:
+#' - `all`: A tibble combining global, regional, and income group metrics with columns:
+#'   - `year`: The year of the metric.
+#'   - `group`: The grouping level ("Global", "Region", or "Income Group").
+#'   - `min_max_scaled_wtd`: The scaled standardized distance metric.
+#' - `latest_year`: A subset of the `all` tibble, filtered to only include metrics from the latest year.
+#'
+#' @examples
+#' # Example usage
+#' standardized_metrics <- summarize_standardized_distance_metrics(
+#'   indicator_standardized_distance_metrics = list(
+#'     global = tibble(year = 2021:2022, min_max_scaled_wtd = c(0.75, 0.8)),
+#'     region = tibble(year = 2021:2022, min_max_scaled_region_wtd = c(0.7, 0.78)),
+#'     income_group = tibble(year = 2021:2022, min_max_scaled_income_group_wtd = c(0.65, 0.72))
+#'   )
+#' )
+#'
+summarize_standardized_distance_metrics <- function(indicator_standardized_distance_metrics) {
+  global <- indicator_standardized_distance_metrics$global |>
+    mutate(group = "Global") |>
+    rename(
+      min_max_scaled_vs_global_wtd = min_max_scaled_wtd,
+      min_max_mean_scaled_vs_global_wtd = min_max_mean_scaled_wtd
+    ) |>
+    select(year, group, min_max_scaled_vs_global_wtd, min_max_mean_scaled_vs_global_wtd) 
+  
+  region <- indicator_standardized_distance_metrics$region |> 
+    mutate(group = region) |>
+    rename(
+      min_max_scaled_vs_global_wtd = min_max_scaled_region_vs_global_wtd,
+      min_max_mean_scaled_vs_global_wtd = min_max_mean_scaled_region_vs_global_wtd
+    ) |> 
+    select(year, group, min_max_scaled_vs_global_wtd, min_max_mean_scaled_vs_global_wtd)
+  
+  income_group <- indicator_standardized_distance_metrics$income_group |>
+    mutate(group = income_group) |>
+    rename(
+      min_max_scaled_vs_global_wtd = min_max_scaled_income_group_wtd,
+      min_max_mean_scaled_vs_global_wtd = min_max_mean_scaled_income_group_wtd
+    ) |> 
+    select(year, group, min_max_scaled_vs_global_wtd, min_max_mean_scaled_vs_global_wtd) 
+  
+  # order by Low, lower middle income, upper middle income, high income
+  income_group <- income_group |>
+    mutate(group = fct_relevel(group, "Low income", "Lower middle income", "Upper middle income", "High income")) |> 
+    arrange(group)
+  
+  all <- bind_rows(global, region, income_group)  |>
+    mutate(
+      year = as.integer(year),
+      min_max_scaled_vs_global_wtd = round(min_max_scaled_vs_global_wtd, 2),
+      min_max_mean_scaled_vs_global_wtd = round(min_max_mean_scaled_vs_global_wtd, 2)
+    ) |> 
+    rename(
+      `Latest Year` = year,
+      `Group` = group,
+      `Min-Max` = min_max_scaled_vs_global_wtd,
+      `Min-Max Mean-Scaled` = min_max_mean_scaled_vs_global_wtd
+    )
+  
+  latest_year <- all |> 
+    group_by(Group) |>
+    filter(`Latest Year` == max(`Latest Year`)) |>
+    ungroup()
+  
+  list(
+    all = all,
+    latest_year = latest_year
   )
 }
