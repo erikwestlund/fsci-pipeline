@@ -3,6 +3,7 @@ output/*
 shared/*
 .idea/*
 *.html
+*.zip
 
 ## from: https://github.com/github/gitignore/blob/main/R.gitignore
 # History files

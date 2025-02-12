@@ -1202,7 +1202,13 @@ generate_velocity_plots <- function(indicator_variable_metrics, velocity_summary
         cagr = metric_group_avg
       )
       
-      group_data <- bind_rows(global_avg_data, group_avg_data, group_data) |> 
+      if(milestone %in% c("global_target", "global_milestone")) {
+        group_data <- bind_rows(global_avg_data, group_avg_data, group_data) 
+      } else {
+        group_data <- bind_rows(group_avg_data, group_data) 
+      }
+      
+      group_data <- group_data |> 
       mutate(
         country = factor(
           country,
@@ -1734,12 +1740,12 @@ get_indicator_variable_metrics <- function(
         velocity_region_milestone_plots <- generate_velocity_plots(indicator_variable_metrics, velocity_summary, label = indicator_label, unit = indicator_unit, milestone = "region_milestone", group_by = "region", velocity_metric="cagr")
         velocity_income_group_milestone_plots <- generate_velocity_plots(indicator_variable_metrics, velocity_summary, label = indicator_label, unit = indicator_unit, milestone = "income_group_milestone", group_by = "income_group", velocity_metric="cagr")
         
-        save_forest_plots(distance_region_plots, indicator_variable, "region")
-        save_forest_plots(distance_income_group_plots, indicator_variable, "income_group")
-        save_forest_plots(velocity_global_target_plots, indicator_variable, "global_target")
-        save_forest_plots(velocity_global_milestone_plots, indicator_variable, "global_milestone")
-        save_forest_plots(velocity_region_milestone_plots, indicator_variable, "region_milestone")
-        save_forest_plots(velocity_income_group_milestone_plots, indicator_variable, "income_group_milestone")
+        save_forest_plots(distance_region_plots, indicator_variable, "region", for_metric="distance")
+        save_forest_plots(distance_income_group_plots, indicator_variable, "income_group", for_metric="distance")
+        save_forest_plots(velocity_global_target_plots, indicator_variable, "global_target", for_metric="velocity")
+        save_forest_plots(velocity_global_milestone_plots, indicator_variable, "global_milestone", for_metric="velocity")
+        save_forest_plots(velocity_region_milestone_plots, indicator_variable, "region_milestone", for_metric="velocity")
+        save_forest_plots(velocity_income_group_milestone_plots, indicator_variable, "income_group_milestone", for_metric="velocity")
         
         message <- "Indicator variable successfully processed."
       },
@@ -2628,9 +2634,9 @@ get_weight_col <- function() {
 #'
 #' # Save forest plots for "safeh20" by income group
 #' save_forest_plots(plots_by_income, variable_name = "safeh20", group_by = "income_group")
-save_forest_plots <- function(plots, variable_name, group_by, output_dir = "output/images", width = 10, height = 8) {
+save_forest_plots <- function(plots, variable_name, group_by, output_dir = "output/images", width = 10, height = 8, for_metric="distance") {
   # Create the output directory for the variable if it doesn't exist
-  variable_dir <- file.path(output_dir, variable_name)
+  variable_dir <- file.path(output_dir, variable_name, for_metric)
   if (!dir.exists(variable_dir)) {
     dir.create(variable_dir, recursive = TRUE)
   }

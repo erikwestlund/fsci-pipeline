@@ -194,8 +194,8 @@ for(indicator_variable_metrics in metrics_data) {
     cat("### Metrics Visualization {.tabset} \n\n")
     cat("#### Region\n\n")
 
-    if (!is.null(indicator_variable_metrics$visualizations$region)) {
-      for (visual in indicator_variable_metrics$visualizations$region) {
+    if (!is.null(indicator_variable_metrics$visualizations$distance$region)) {
+      for (visual in indicator_variable_metrics$visualizations$distance$region) {
         if (!is.null(visual)) {
           print(visual)
         }
@@ -207,8 +207,8 @@ for(indicator_variable_metrics in metrics_data) {
 
     cat("#### Income Group\n\n")
 
-    if (!is.null(indicator_variable_metrics$visualizations$income_group)) {
-      for (visual in indicator_variable_metrics$visualizations$income_group) {
+    if (!is.null(indicator_variable_metrics$visualizations$distance$income_group)) {
+      for (visual in indicator_variable_metrics$visualizations$distance$income_group) {
         if (!is.null(visual)) {
           print(visual)
         }
