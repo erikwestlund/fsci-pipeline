@@ -1,0 +1,531 @@
+---
+title: "Report"
+author: "FSCI Group"
+date: "2025-02-05"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    theme: united
+    code_folding: show
+    html_document:
+      keep_md: true
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+library(dplyr)
+library(forcats)
+library(ggplot2)
+library(ggtext)
+library(purrr)
+library(readr)
+library(readxl)
+library(stringr)
+library(tidyr)
+library(rlang)
+library(kableExtra)
+library(DT)
+
+raw_analysis_data <- readRDS("data/FSCI_2024.rds")
+raw_target_data <- readxl::read_xlsx("data/Codebook Dec 2024.xlsx", sheet = "Indicators and Target Value")
+
+metrics_df <- readRDS("output/metrics_combined_dataframe.rds")
+metrics_data <- readRDS("output/metrics_data.rds")
+
+target_year <- 2030
+source("functions.R")
+source("data_patches.R")
+
+indicator_variables <- raw_analysis_data |> get_indicator_variables()
+
+```
+
+# Indicator Summary
+
+```{r summary, echo=FALSE, warning=FALSE, message=FALSE}
+
+get_indicator_summary <- function(indicator_variable_metrics) {
+  var <- indicator_variable_metrics$variable
+  indicator_unit <- indicator_variable_metrics$meta$indicator_unit
+  desirable_direction <- if_else(indicator_variable_metrics$meta$desirable_direction == 1, "⬆", "⬇")
+  
+  if(length(var) == 0) {
+    return(NULL)
+  }
+  
+  data_type <- indicator_variable_metrics$meta$data_type
+  indicator <- indicator_variable_metrics$indicator
+  
+  if (length(indicator_variable_metrics$summaries$milestones) > 0) {
+    target <- indicator_variable_metrics$summaries$milestones |> filter(Group == "Target") |> pull(Milestone)
+    target <- ifelse(length(target) > 0 && !is.na(target), target, NA)
+    has_target <- ifelse(length(target) > 0 && !is.na(target), "Yes", "No")
+  } else {
+    target <- NA
+    has_target <- "No"
+  }
+  
+  years_of_data <- indicator_variable_metrics$summaries$indicators$years_of_data
+  first_year <- indicator_variable_metrics$summaries$indicators$first_year
+  first_year_number_of_countries <- indicator_variable_metrics$summaries$indicators$first_year_reporting_countries
+  latest_year <- indicator_variable_metrics$summaries$indicators$latest_year
+  latest_year_number_of_countries <- indicator_variable_metrics$summaries$indicators$latest_year_reporting_countries
+
+  tribble(~"Variable", ~"Indicator", ~"Unit", ~"Desirable Direction", ~"Global Target", ~"Years of Data", ~"First Year", ~"First Year Number of Countries", ~"Latest Year", ~"Latest Year Number of Countries",
+          var, indicator, indicator_unit, desirable_direction, has_target, years_of_data, first_year, first_year_number_of_countries, latest_year, latest_year_number_of_countries)
+
+}
+
+table <-
+  map_dfr(
+    indicator_variables, 
+    ~ get_indicator_summary(metrics_data[[.x]])
+  )
+
+table |>
+  select(-Unit, -`Desirable Direction`) |>
+  kable()
+
+```
+
+# Definitions
+
+## Reference Points
+
+Several reference points are used throughout this report.
+
+* *Global Target*: The global targets are derived from expertise and commonly agreed upon goals, such as those set forth in the UN's Sustainable Development Goals (SDGs).
+* *Global Milestone*: The global milestones are derived by taking the 80th percentile of the latest available data for each indicator (or, when the desirable direction of the indicator is negative, the 20th percentile).
+* *Region Milestone*: The region milestones are derived by taking the 80th percentile of the latest available data for each indicator within a region (or, when the desirable direction of the indicator is negative, the 20th percentile).
+* *Income Group Milestone*: The income group milestones are derived by taking the 80th percentile of the latest available data for each indicator within an income group (or, when the desirable direction of the indicator is negative, the 20th percentile).
+
+## Distance
+
+Distance to target is calculated as the difference between the latest value and the chosen reference point. For example, the global target for safe drinking water is 100. If the latest value is 80, the distance to the target is 20.
+
+In the event a country exceeds the reference point, these values may take negative values. For example, if the regional milestone for safe drinking water is 80, and a country's latest value is 90, the distance would be negative.
+
+## Velocity
+
+The velocity tables in the following report the compound annual growth rate, or CAGR, required to reach a specific target by 2030. The CAGR is calculated as follows:
+
+$$
+CAGR = \left(\frac{\text{Target Value}}{\text{Latest Value}}\right)^{\frac{1}{2030-LatestYear}} - 1
+$$
+
+Where the **Target Value** is the value required to meet the 2030 goal, the **Latest Value** is the most recent data point or the average of the last three data points, and $2030 - LatestYear$ is the number of years between the current year and 2030.
+
+## Sustainable Development Goals 
+
+Sustainable Development Goals (SDGs) metrics are calculated using [the methodology defined here](https://unstats.un.org/sdgs/files/report/2024/Technical_Note_for_Progress_Assessment_2024.pdf) and summarized below.
+
+### When Global Target Is Defined
+
+For indicators with defined 2030 global targets and at least two available data points (a baseline year and a latest year), progress is assessed using the actual compound annual growth rate (CAGR). The baseline year is typically 2015, or the closest year after 2015 if data from 2015 is unavailable. The latest year represents the most recent available data point.
+
+The actual CAGR between the baseline year \( b \) and the latest year \( t \) is calculated:
+
+$$
+CAGR_a = \left(\frac{v_t}{v_b}\right)^{\frac{1}{t-b}} - 1
+$$
+
+Using this CAGR, the expected value in 2030 is projected:
+
+$$
+v_{2030}^e = v_t \times (1 + CAGR_a)^{2030 - t}
+$$
+
+A ratio is then calculated to assess progress:
+
+$$
+\frac{v_{2030}^e - v_b}{v_{2030} - v_b}
+$$
+
+Where \( v_{2030} \) is the target value for 2030, and \( v_b \) is the baseline value. Progress is categorized based on this ratio:
+
+| **Category**         | **Progress Criteria**            |
+|----------------------|---------------------------------|
+| On track             | ≥ 95%                           |
+| Moderate progress    | 50% – 95%                       |
+| Marginal progress    | 10% – 50%                       |
+| Stagnation           | 0% – 10%                        |
+| Regression           | < 0%                            |
+
+If the baseline value equals the 2030 target value, the ratio becomes undefined. In such cases, trends are assigned based on whether the latest value shows improvement or decline relative to the target.
+
+### When No Global Target Is Defined
+
+For indicators without explicit 2030 targets but with at least two available data points, progress is assessed based on the actual CAGR between the baseline and the latest year. The trend classification depends on whether an increase or decrease in value is desirable.
+
+**If an increase is desirable:**
+
+| **Category**         | **CAGR Criteria**                      |
+|----------------------|----------------------------------------|
+| On track             | \( CAGR_a \geq 2\% \)                  |
+| Moderate progress    | \( 1.25\% \leq CAGR_a < 2\% \)         |
+| Marginal progress    | \( 0.5\% \leq CAGR_a < 1.25\% \)       |
+| Stagnation           | \( 0 \leq CAGR_a < 0.5\% \)            |
+| Regression           | \( CAGR_a < 0\% \)                     |
+
+**If a decrease is desirable:**
+
+| **Category**         | **CAGR Criteria**                          |
+|----------------------|--------------------------------------------|
+| On track             | \( CAGR_a \leq -2\% \)                     |
+| Moderate progress    | \( -2\% < CAGR_a \leq -1.25\% \)           |
+| Marginal progress    | \( -1.25\% < CAGR_a \leq -0.5\% \)         |
+| Stagnation           | \( -0.5\% < CAGR_a \leq 0\% \)             |
+| Regression           | \( CAGR_a > 0\% \)                         |
+
+
+# Indicator Performance Metrics
+
+
+```{r calculate_metrics, echo=FALSE, message=FALSE, warning=FALSE, results='asis', fig.width = 12, fig.height = 10}
+
+get_latest_years <- function(indicator_variable_metrics) {
+  latest_data_year_global <- indicator_variable_metrics$data |> filter(!is.na(latest_year)) |> pull(latest_year) |> max()
+  latest_year_region <- indicator_variable_metrics$data |> filter(!is.na(latest_year)) |> group_by(region) |> summarise(latest_year = max(latest_year)) |> filter(!is.na(region))
+  latest_year_income_group <- indicator_variable_metrics$data |> filter(!is.na(latest_year)) |> group_by(income_group) |> summarise(latest_year = max(latest_year)) |> filter(!is.na(income_group))
+
+  list(
+    global = latest_data_year_global,
+    region = latest_year_region,
+    income_group = latest_year_income_group
+  )
+}
+
+rename_reference_points <- function(table) {
+  table |>
+    mutate(
+      Group = if_else(
+            str_starts(Group, "Region:"),
+            str_replace(Group, "Region:", "Regional Milestone:"),
+            Group
+      ),
+      Group = if_else(
+            str_starts(Group, "Income Group:"),
+            str_replace(Group, "Income Group:", "Income Milestone:"),
+            Group
+      ),
+      Group = case_when(
+        Group == "Target" ~ "Global Target",
+        Group == "Global" ~ "Global Milestone",
+        TRUE ~ Group
+      ),
+    ) |>
+    rename(
+      `Reference Point` = Group,
+      `Reference Point Value` = Milestone,
+    )
+}
+
+distance_summary_table <- function(indicator_variable_metrics) {
+  milestone_summary <- indicator_variable_metrics$summaries$milestones
+
+  latest_data_year <- get_latest_years(indicator_variable_metrics)
+
+  milestone_summary |>
+    left_join(latest_data_year$region |> mutate(region = paste0("Region: ", region)), by = c("Group" = "region")) |>
+    left_join(latest_data_year$income_group |> mutate(income_group = paste0("Income Group: ", income_group)), by = c("Group" = "income_group")) |>
+    rename_reference_points() |>
+    mutate(
+      `Latest Data Year` = case_when(
+        str_starts(`Reference Point`, "Global Target") ~ latest_data_year$global,
+        str_starts(`Reference Point`, "Global Milestone") ~ latest_data_year$global,
+        !is.na(latest_year.x) ~ latest_year.x,
+        !is.na(latest_year.y) ~ latest_year.y,
+        TRUE ~ NA_real_  # Default to NA if no match found
+      )
+    ) |>
+    select(-latest_year.x, -latest_year.y) |>
+    rename(
+      `Average Distance From Reference Point` = `Average Distance To Target/Milestone`,
+      `Number of Countries Countributing` = `Countries Contributing`
+    ) |>
+    select(
+      `Reference Point`, `Reference Point Value`,  `Latest Data Year`, `Average Distance From Reference Point`, `Unit`, `Number of Countries Countributing`
+    )
+}
+
+velocity_summary_table <- function(indicator_variable_metrics) {
+  milestone_summary <- indicator_variable_metrics$summaries$milestones
+  velocity_summary_cagr <- indicator_variable_metrics$summaries$velocities$cagr
+
+  latest_data_year <- get_latest_years(indicator_variable_metrics)
+  years_available <- indicator_variable_metrics$summaries$indicators$years_of_data
+
+  last_three_years_global <- indicator_variable_metrics$data |>
+    filter(!is.na(last_three_years)) |>
+    summarise(last_three_years = last_three_years |> first()) |>
+    mutate(
+      last_three_years = str_replace_all(last_three_years, ",", ", ")
+    )
+
+  last_three_years_region <- indicator_variable_metrics$data |>
+    filter(!is.na(last_three_years)) |>
+    group_by(region) |>
+    summarise(last_three_years = last_three_years |> first()) |>
+    mutate(
+      last_three_years = str_replace_all(last_three_years, ",", ", ")
+    )
+
+  last_three_years_income_group <- indicator_variable_metrics$data |>
+    filter(!is.na(last_three_years)) |>
+    group_by(income_group) |>
+    summarise(last_three_years = last_three_years |> first()) |>
+    mutate(
+      last_three_years = str_replace_all(last_three_years, ",", ", ")
+    ) |>
+    filter(!is.na(income_group))
+
+  velocity_summary_cagr |>
+    left_join(last_three_years_region |> mutate(region = paste0("Region: ", region)), by = c("Group" = "region")) |>
+    left_join(last_three_years_income_group |> mutate(income_group = paste0("Income Group: ", income_group)), by = c("Group" = "income_group")) |>
+    left_join(milestone_summary |> select(Group, `Countries Contributing`), by = "Group") |>
+    rename_reference_points() |>
+    mutate(
+      `Last Three Years` = case_when(
+        str_starts(`Reference Point`, "Global Target") ~ last_three_years_global$last_three_years,
+        str_starts(`Reference Point`, "Global Milestone") ~ last_three_years_global$last_three_years,
+        !is.na(last_three_years.x) ~ last_three_years.x,
+        !is.na(last_three_years.y) ~ last_three_years.y,
+        TRUE ~ NA # Default to NA if no match found
+      )
+    ) |>
+    select(-last_three_years.x, -last_three_years.y) |>
+    rename(
+      `Average CAGR From Latest Data Point To Reference Point (% per year)` = `Avg Growth Rate Required (From Latest Value)`,
+      `Average CAGR using Historical Average to Reference Point (% per year)` = `Avg Growth Rate (From 3-Year Avg)`,
+      `Number of Countries Included` = `Countries Contributing`
+    ) |>
+    mutate(
+      `Data Years Available` = years_available,
+      # Don't report <= 3
+      `Average CAGR using Historical Average to Reference Point (% per year)` = if_else(`Data Years Available` < 3, "", `Average CAGR using Historical Average to Reference Point (% per year)`)
+    ) |> 
+    select(
+      `Reference Point`,
+      `Reference Point Value`,
+      `Data Years Available`,
+      # `Last Three Years`,
+      `Number of Countries Included`,
+      `Average CAGR From Latest Data Point To Reference Point (% per year)`,
+      `Average CAGR using Historical Average to Reference Point (% per year)`,
+    )
+}
+
+get_distance_viz <- function(indicator_variable_metrics) {
+  list(
+    region = indicator_variable_metrics$visualizations$distance$region,
+    income_group = indicator_variable_metrics$visualizations$distance$income_group
+  )
+}
+
+get_velocity_viz <- function(indicator_variable_metrics) {
+  list(
+    global_target = indicator_variable_metrics$visualizations$velocity$global_target,
+    milestone = list(
+      global = indicator_variable_metrics$visualizations$velocity$global_milestone,
+      region = indicator_variable_metrics$visualizations$velocity$region,
+      income_group = indicator_variable_metrics$visualizations$velocity$income_group
+    )
+  )
+}
+
+print_viz <- function(viz) {
+  if (length(viz) == 0 || is.null(viz) || any(is.na(viz))) {
+    cat("\nNo visualization available.\n\n")
+  } else {
+    viz |> print()
+  }
+}
+
+get_sdg_summary <- function(indicator_variable_metrics) {
+  table <- indicator_variable_metrics$summaries$sdg |>
+      mutate(`SDG Progress Assessment` = factor(`SDG Progress Assessment`,
+                               levels = c("On track",
+                                          "Moderate progress",
+                                          "Marginal progress",
+                                          "Stagnation",
+                                          "Regression")))
+
+  # Meta
+  start_finish <- indicator_variable_metrics$data |>
+    mutate(
+      start_finish = paste0(as.character(sdg_baseline_year), "-", as.character(sdg_latest_year))
+    ) |>
+    group_by(start_finish) |>
+    summarise(n = n()) |>
+    rename(
+      `Basline Year-Finish Year` = start_finish
+    )
+
+  baseline_years <- indicator_variable_metrics$data |> group_by(sdg_baseline_year) |> summarise(n = n())
+  latest_years <- indicator_variable_metrics$data |> group_by(sdg_latest_year) |> summarise(n = n())
+
+  meta <- list(start_finish = start_finish)
+
+  empty_data <- table |> filter(!is.na(`SDG Progress Assessment`)) |> pull(Count) |> sum() == 0
+
+  if (empty_data) {
+    return(NULL)
+  }
+
+  has_data <- table |> filter(`SDG Progress Assessment` != "No data") |>
+    mutate(
+      `Percent (%)` = paste0(round(Count/sum(Count) * 100, 1) |> as.character(), '%')
+    )
+
+  no_data <- table |> filter(`SDG Progress Assessment` == "No data") |>
+    mutate(
+      `Percent (%)` = '-'
+    )
+
+  # Bar plot
+  bar_plot <- ggplot(has_data, aes(x = factor(`SDG Progress Assessment`,
+                                levels = rev(c("On track",
+                                               "Moderate progress",
+                                               "Marginal progress",
+                                               "Stagnation",
+                                               "Regression"))),
+                                y = Count)) +
+    geom_bar(stat = "identity", fill = "skyblue") +
+    geom_text(aes(label = paste0(Count, " (", `Percent (%)`, ")")),
+              hjust = -0.1,
+              size = 4) +
+    coord_flip() +
+    labs(title = "SDG Progress Assessment Distribution",
+         x = "SDG Progress Assessment",
+         y = "Count") +
+    theme_minimal() +
+    theme(plot.title = element_text(size = 14, face = "bold"),
+          axis.text.y = element_text(size = 12),
+          axis.title.x = element_text(size = 12)) +
+    expand_limits(y = max(has_data$Count) * 1.20)
+
+  list(
+    table = bind_rows(has_data, no_data),
+    figure = bar_plot,
+    meta = meta
+  )
+}
+
+# Debug: quickly set a variable to test inside the loop manually
+# variable_to_test <- 'childlabor'
+# variable_to_test <- 'safeh20'
+# list_index <- which(sapply(metrics_data, function(x) x$variable) == variable_to_test)
+# indicator_variable_metrics <- metrics_data[[list_index]]
+
+# subset for testing:
+# metrics_data <- list(metrics_data[[1]])
+# metrics_data <- list(metrics_data[[1]], metrics_data[[2]], metrics_data[[3]], metrics_data[[4]])
+for(indicator_variable_metrics in metrics_data) {
+  cat(paste0("## ", indicator_variable_metrics$variable, ": ", indicator_variable_metrics$short_label , "\n\n"))
+
+  if(length(indicator_variable_metrics$meta$data_type) == 0) {
+    stop("No data type found for ", indicator_variable_metrics$variable)
+  }
+
+  indicator_summary <- indicator_variable_metrics$summaries$indicators
+  milestone_summary <- indicator_variable_metrics$summaries$milestones
+  velocity_summary <- indicator_variable_metrics$summaries$velocities
+
+  if (indicator_variable_metrics$meta$data_type == "numeric") {
+    cat("### Distance\n\n")
+
+    distance_summary_table(indicator_variable_metrics) |> kable() |> print()
+
+    cat("\n\n#### Visualization {.tabset}\n\n")
+    
+    dist_viz <- get_distance_viz(indicator_variable_metrics)
+    
+    cat("\n\n##### By Region\n\n")
+    
+    for(region in names(dist_viz$region)) {
+      cat(paste0("\n\n###### ", region, "\n\n"))
+      dist_viz$region[[region]] |> print_viz()
+    }
+    
+    cat("\n\n##### By Income Group\n\n")
+    
+    for(income_group in names(dist_viz$income_group)) {
+      cat(paste0("\n\n###### ", income_group, "\n\n"))
+      dist_viz$income_group[[income_group]] |> print_viz()
+    }
+    
+    cat("\n\n### Velocity\n\n")
+
+    velocity_summary_table(indicator_variable_metrics) |> kable() |> print()
+
+    cat("\n\n#### Visualization {.tabset}\n\n")
+    
+    velocity_viz <- get_velocity_viz(indicator_variable_metrics)
+    
+    cat("\n\n##### Global Target\n\n")
+    
+      if(!is.null(velocity_viz$global_target)) {
+            
+        for(region in names(velocity_viz$global_target)) {
+          cat(paste0("\n\n###### ", region, "\n\n"))
+          
+          velocity_viz$global_target[[region]] |> print_viz()
+        }
+      } else {
+        cat("No global target set.\n\n")
+      }
+
+    
+    cat("\n\n##### Global Milestone\n\n")
+    
+    for(region in names(velocity_viz$milestone$global)) {
+      cat(paste0("\n\n###### ", region, "\n\n"))
+      velocity_viz$milestone$global[[region]] |> print_viz()
+    }
+    
+    cat("\n\n##### Region Milestones\n\n")
+    
+    for(region in names(velocity_viz$milestone$region)) {
+      cat(paste0("\n\n###### ", region, "\n\n"))
+      velocity_viz$milestone$region[[region]] |> print_viz()
+    }
+    
+    cat("\n\n##### Income Group Milestones\n\n")
+        
+    for(income_group in names(velocity_viz$milestone$income_group)) {
+      cat(paste0("\n\n###### ", income_group, "\n\n"))
+      velocity_viz$milestone$income_group[[income_group]] |> print_viz()
+    }
+    
+    cat("\n\n### SDG Progress {.tabset}\n\n")
+
+    cat("#### Summary\n\n")
+
+    sdg_summary <- get_sdg_summary(indicator_variable_metrics)
+
+    if(is.null(sdg_summary)) {
+      cat("No data available for SDG progress.\n\n")
+    } else {
+      sdg_summary$table |> kable() |> print()
+      sdg_summary$figure |> print_viz()
+    }
+
+    cat("\n\n#### Meta\n\n")
+
+    sdg_summary$meta$start_finish |> kable() |> print()
+
+  } else {
+    cat("This variable is not numeric. No indicator performance metrics are available.\n\n")
+  }
+
+  cat("\n\n")
+  cat("---")
+  cat("\n\n")
+}
+
+```

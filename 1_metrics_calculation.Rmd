@@ -165,7 +165,7 @@ if(debug_limited_set) {
 }
 
 # Debug: quickly set a variable to test inside the loop manually
-# variable_to_test <- 'childlabor'
+# variable_to_test <- 'safeh20'
 # list_index <- which(sapply(metrics_data, function(x) x$variable) == variable_to_test)
 # indicator_variable_metrics <- metrics_data[[list_index]]
 for(indicator_variable_metrics in metrics_data) {
@@ -185,15 +185,15 @@ for(indicator_variable_metrics in metrics_data) {
   cat("### Data Summary\n\n")
   summarize_indicator_summary(indicator_summary) |> kable() |> print()
 
-  
+
   if (indicator_variable_metrics$meta$data_type == "numeric") {
     cat("### Milestone Metrics Summary\n\n")
     cat("Note that `value` is subtracted from milestone/targets.\n\n")
     milestone_summary |> kable() |> print()
-  
+
     cat("### Metrics Visualization {.tabset} \n\n")
-    cat("#### Region\n\n")  
-    
+    cat("#### Region\n\n")
+
     if (!is.null(indicator_variable_metrics$visualizations$region)) {
       for (visual in indicator_variable_metrics$visualizations$region) {
         if (!is.null(visual)) {
@@ -201,52 +201,52 @@ for(indicator_variable_metrics in metrics_data) {
         }
       }
     }
-    
+
     cat("\n\n")
-    
-    
-    cat("#### Income Group\n\n")  
-    
-        if (!is.null(indicator_variable_metrics$visualizations$income_group)) {
+
+
+    cat("#### Income Group\n\n")
+
+    if (!is.null(indicator_variable_metrics$visualizations$income_group)) {
       for (visual in indicator_variable_metrics$visualizations$income_group) {
         if (!is.null(visual)) {
           print(visual)
         }
       }
     }
-    
+
     cat("\n\n")
-    
- 
+
+
     cat("### Velocity Metrics Summary {.tabset}\n\n")
-  
+
     cat("Growth rates are reported in percents. Note that CAGRs cannot be calculated for values where the starting or ending value is 0.\n\n")
 
     cat("#### CAGR\n\n")
     velocity_summary$cagr |> kable() |> print()
     cat("#### Linear Growth\n\n")
     velocity_summary$linear |> kable() |> print()
-  
+
     cat("### Min/Max Indices\n\n")
 
     cat("Notes: \n\n")
     cat("1. The `Min-Max` index is calculated as `(weighted_mean_group - min_global) / (max_global - min_global) and is restricted to values from 0-1`.\n")
-    cat("2. The `Min-Max Mean-Scaled` index is calculated as `(weighted_mean_group - weighted_mean_global) / (max_global - min_global)`. Negative numbers are `bad` while positive ones are `good`.\n")
-    cat("(2) differs slightly from the original formula in the paper, which uses the group minima/maxima.\n\n")
-    
+    cat("2. The `Min-Max Mean-Scaled` index is calculated as `(weighted_mean_group - weighted_mean_global) / (max_global - min_global)`. Negative numbers are `bad` while positive ones are `good`.\n\n")
+    cat("Step 2 differs slightly from the original formula in the paper, which uses the group minima/maxima.\n\n")
+
     minmax_summary <- summarize_standardized_distance_metrics(indicator_variable_metrics$standardized_distance_metrics)
-    
+
     minmax_summary$latest_year |> kable() |> print()
-    
+
     cat("### Metrics Data\n\n")
-    
+
     if(include_data) {
       cat(DT::datatable(
               indicator_variable_metrics$data,
               rownames = FALSE,
               options = list(pageLength = 20, scrollX = TRUE)
-            ) |> 
-              htmltools::as.tags() |> 
+            ) |>
+              htmltools::as.tags() |>
               as.character())
     } else {
       cat("Data not shown. Set `include_data = TRUE` in the notebook set up to include data.\n\n")
@@ -254,7 +254,7 @@ for(indicator_variable_metrics in metrics_data) {
   } else {
     cat("This variable is not numeric. No milestone or velocity metrics are available.\n\n")
   }
-  
+
   cat("\n\n")
   cat("---")
   cat("\n\n")

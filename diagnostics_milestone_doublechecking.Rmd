@@ -1,0 +1,220 @@
+---
+title: "Milestone Doublechecking"
+author: "FSCI Group"
+date: "2025-02-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+library(dplyr)
+library(forcats)
+library(ggplot2)
+library(ggtext)
+library(purrr)
+library(readr)
+library(readxl)
+library(stringr)
+library(tidyr)
+
+library(rlang)
+library(kableExtra)
+library(DT)
+
+
+# Contains functions for data preparation
+source("functions.R")
+source("data_patches.R")
+
+# Stored in data_patches.R
+data_patches <- get_data_patches()
+
+
+```
+
+
+# Load Data
+
+```{r load_data}
+
+raw_analysis_data <- readRDS("data/FSCI_2024.rds")
+raw_target_data <- readxl::read_xlsx("data/Codebook Dec 2024.xlsx", sheet = "Indicators and Target Value")
+target_year <- 2030
+
+analysis_data <- get_analysis_data(raw_analysis_data) 
+
+analysis_data |> head()
+
+target_data <- get_target_data(raw_target_data)
+
+target_data |> head()
+
+indicator_variables <- get_indicator_variables(analysis_data)
+indicator_variables |> print(print_n=Inf)
+
+```
+
+# Example 1: Global, Safe Water (safeh20)
+
+
+## Direction
+
+It's positive:
+
+```{r example_1_global_safe_water_dir}
+
+var <- 'safeh20'
+
+desirable_direction <- analysis_data |> 
+  filter(variable == var) |> 
+  pull(desirable_direction) |> 
+  unique()
+
+desirable_direction
+
+percentile <- ifelse(desirable_direction == 1, 80, 20)
+
+percentile
+
+```
+
+## Data
+
+```{r example_1_global_safe_water_data}
+
+safeh20_global_data <- analysis_data |> 
+  filter(variable == 'safeh20') |> 
+  select(country, year, value) |> 
+  arrange(country, year) |> 
+  mutate(
+    value = as.numeric(value)
+  )
+
+DT::datatable(safeh20_global_data, rownames = FALSE)
+
+
+```
+
+## Milestone calculation
+
+We take the latest year with date.
+
+```{r example_1_global_safe_water_milestone}
+
+last_year_milestone_data <- safeh20_global_data |> 
+  filter(!is.na(value)) |>
+  group_by(country) |> 
+  mutate(
+    max_year = max(year),
+  ) |> 
+  filter(year == max_year) |>
+  ungroup()
+
+last_year_milestone_data |> kable()
+
+```
+
+Then we take all values over/under this percentile, depending on the direction.
+
+```{r example_1_global_safe_water_milestone_2}
+
+gt_lt <- ifelse(desirable_direction == 1, '>=', '<=')
+
+global_milestone <- if(desirable_direction == 1) {
+  last_year_milestone_data |> 
+    filter(value >= quantile(value, 0.80)) |> 
+    summarise(
+      global_milestone = mean(value, na.rm = TRUE)
+    ) 
+} else {
+  last_year_milestone_data |> 
+    filter(value <= quantile(value, 0.20)) |> 
+    summarise(
+      global_milestone = mean(value, na.rm = TRUE)
+    ) 
+}
+
+global_milestone |> kable()
+
+
+```
+
+Using the method of:
+
+1. Take the latest year.
+2. Take the 80th percentile if the direction is positive, or the 20th percentile if the direction is negative.
+3. Calculate the mean of the values that are greater than or equal to the 80th percentile, or less than or equal to the 20th percentile.
+
+We get a global milestone of `99.60`. This is still different from the provided Excel file, which has `98.77`. 
+
+
+# Example 2: Region, Safe Water
+
+## Direction
+
+Same as above; leave alone.
+
+## Data
+
+```{r example_2_region_safe_water_data}
+
+safeh20_region_data <- analysis_data |> 
+  filter(variable == 'safeh20') |> 
+  select(un_continental_region, country, year, value) |> 
+  arrange(un_continental_region, country, year) |> 
+  mutate(
+    value = as.numeric(value)
+  )
+
+DT::datatable(safeh20_region_data, rownames = FALSE)
+
+```
+
+## Milestone calculation
+
+```{r example_2_region_safe_water_milestone}
+
+last_year_region_milestone_data <- analysis_data |> 
+  filter(variable == 'safeh20') |> 
+  select(country, year, value, un_continental_region) |> 
+  mutate(
+    value = as.numeric(value)
+  ) |> 
+  filter(!is.na(value)) |>
+  group_by(country) |> 
+  mutate(
+    max_year = max(year),
+  ) |> 
+  filter(year == max_year) |>
+  ungroup()
+
+region_milestone_data <- if(desirable_direction == 1) {
+  last_year_region_milestone_data |> 
+    group_by(un_continental_region) |>
+    filter(value >= quantile(value, 0.80)) |> 
+    summarise(
+      value = mean(value, na.rm = TRUE)
+    ) 
+} else {
+  last_year_milestone_data |> 
+    group_by(un_continental_region) |>
+    filter(value <= quantile(value, 0.20)) |> 
+    summarise(
+      value = mean(value, na.rm = TRUE)
+    )
+}
+
+region_milestone_data |> kable()
+
+```
+
+The above values differ from what is calculated in the Excel files, where:
+
+* Africa = `54.5878295898437`
+* Americas = `94.588737487793`
+* Asia = `97.8738479614258`
+* Europe = `99.8041534423828`
+* Oceania = `99.5280838012695`
+

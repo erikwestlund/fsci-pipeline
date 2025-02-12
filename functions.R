@@ -44,22 +44,26 @@ calculate_distance_metrics <- function(
     variable_col = "variable",
     year_col = "year",
     country_col = "country",
-    value_col = "value"
+    value_col = "value",
+    region_col = "un_continental_region",
+    income_group_col = "income_group"
 ) {
   distance_starting_data <- get_recent_data_values(indicator_data, year_col, country_col, value_col)
   
-  indicator_milestone_metrics |>
-    mutate(target_value = target_value) |>
-    left_join(
-      indicator_data |> select(all_of(c(variable_col, year_col, country_col, value_col))),
-      by = c("variable", "year", "country")
+  indicator_data |> select(all_of(c(variable_col, year_col, country_col, region_col, income_group_col, value_col))) |> 
+    mutate(
+      target_value = target_value,
     ) |> 
     inner_join(
       distance_starting_data,
       by = c(c("year" = "latest_year"), country_col)
-    ) |>
-    rename(latest_year = year) |> 
+    ) |> 
+    inner_join(
+      indicator_milestone_metrics,
+      by = c(country_col, variable_col)
+    ) |> 
     mutate(
+      latest_year = as.numeric(year),
       distance_to_milestone_global = milestone_global - value,
       distance_to_milestone_region = milestone_region - value,
       distance_to_milestone_income_group = milestone_income_group - value,
@@ -79,10 +83,10 @@ calculate_distance_metrics <- function(
 #' milestone values for each category.
 #'
 #' @param indicator_data A data frame containing the indicator data for calculations.
-#' @param regions_col The column name representing regions in the dataset (default: `"un_continental_region"`).
+#' @param region_col The column name representing regions in the dataset (default: `"un_continental_region"`).
 #'   Note: In the raw data, this column is named `UN Continental Region`. To avoid issues using awkward `backtick`
 #'   syntax, before using this function, rename the column to `un_continental_region`.
-#' @param income_groups_col The column name representing income groups in the dataset (default: `"income_group"`).
+#' @param income_group_col The column name representing income groups in the dataset (default: `"income_group"`).
 #' @param variable_col The column name representing the variable/indicator (default: `"variable"`).
 #' @param year_col The column name representing the year of the data (default: `"year"`).
 #' @param country_col The column name representing the country (default: `"country"`).
@@ -95,8 +99,8 @@ calculate_distance_metrics <- function(
 #' # Example usage:
 #' milestone_metrics <- calculate_milestone_metrics(
 #'   indicator_data = analysis_data,
-#'   regions_col = "un_continental_region",
-#'   income_groups_col = "income_group",
+#'   region_col = "un_continental_region",
+#'   income_group_col = "income_group",
 #'   variable_col = "variable",
 #'   year_col = "year",
 #'   country_col = "country",
@@ -104,29 +108,39 @@ calculate_distance_metrics <- function(
 #' )
 calculate_milestone_metrics <- function(
     indicator_data,
-    regions_col = "un_continental_region",
-    income_groups_col = "income_group",
+    region_col = "un_continental_region",
+    income_group_col = "income_group",
     variable_col = "variable",
     year_col = "year",
     country_col = "country",
     value_col = "value"
 ) {
-  milestone_global_data <- calculate_milestones(indicator_data, variable_col, year_col, value_col) |>
-    rename(milestone_global = milestone)
+  milestone_global <- calculate_milestones(indicator_data, variable_col, year_col, value_col, country_col) |> pull(mean_value)
   
-  milestone_region_data <- calculate_milestones(indicator_data, variable_col, year_col, value_col, regions_col) |>
-    rename(milestone_region = milestone) |>
-    select(-all_of(regions_col))
+  milestone_region_data <- calculate_milestones(indicator_data, variable_col, year_col, value_col, country_col, region_col) |>
+    rename(milestone_region = mean_value) |> 
+    filter(!is.na(milestone_region)) |> 
+    filter(!is.na(!!sym(region_col)))
   
-  milestone_income_group_data <- calculate_milestones(indicator_data, variable_col, year_col, value_col, income_groups_col) |>
-    rename(milestone_income_group = milestone) |>
-    select(-all_of(income_groups_col))
+  milestone_income_group_data <- calculate_milestones(indicator_data, variable_col, year_col, value_col, country_col, income_group_col) |>
+    rename(milestone_income_group = mean_value) |> 
+    filter(!is.na(milestone_income_group)) |> 
+    filter(!is.na(!!sym(income_group_col)))
   
-  milestone_global_data |>
-    left_join(milestone_region_data, by = c(variable_col, year_col, country_col)) |>
-    left_join(milestone_income_group_data, by = c(variable_col, year_col, country_col)) |>
-    select(all_of(c(variable_col, year_col, country_col)), everything()) |> 
-    arrange(country_col, -!!sym(year_col))
+  indicator_data |> select(all_of(c(variable_col, year_col, country_col, region_col, income_group_col, value_col))) |> 
+    mutate(
+      milestone_global = milestone_global
+    ) |>
+    left_join(milestone_region_data, by = c(region_col)) |> 
+    left_join(milestone_income_group_data, by = c(income_group_col)) |>
+    filter(!is.na(value)) |>
+    group_by(!!sym(country_col)) |> 
+    mutate(
+      latest_year = max(year)
+    ) |>
+    ungroup() |>
+    filter(year == latest_year) |> 
+    select(all_of(c(variable_col, "latest_year", country_col, "milestone_global", "milestone_region", "milestone_income_group")))
 }
 
 
@@ -170,31 +184,121 @@ calculate_milestones <- function(
     variable_col = "variable",
     year_col = "year",
     value_col = "value",
+    country_col = "country",
     subgroup_col = NULL
 ) {
   group_data <- function(data) {
     if (!is.null(subgroup_col)) {
-      group_by(data, !!sym(subgroup_col), !!sym(variable_col), !!sym(year_col))
+      group_by(data, !!sym(subgroup_col))
     } else {
-      group_by(data, !!sym(variable_col), !!sym(year_col))
+      group_by(data)
     }
   }
+
+  desirable_direction <- indicator_data |> 
+    pull(desirable_direction) |> 
+    unique()
   
   indicator_data |> 
     mutate(
       !!value_col := !!sym(value_col)
     ) |> 
     filter(!is.na(!!sym(value_col))) |> # Remove rows where value could not be converted
-    group_data() |> # Apply conditional grouping
-    reframe(
-      country = country,
-      milestone = quantile(!!sym(value_col), milestone_pctile, na.rm = TRUE) # Calculate using correct milestone given desirability direction
+    group_by(!!sym(country_col)) |> # Group by country
+    mutate(
+      max_year = max(!!sym(year_col), na.rm = TRUE) 
     ) |> 
     ungroup() |> 
-    rename(variable = !!sym(variable_col), year = !!sym(year_col)) |> 
-    unique()  # Remove duplicates. We only remove duplicate rows so no information is lost when calculating metrics.
+    filter(!!sym(year_col) == max_year) |> 
+    group_data() |> # Apply conditional grouping
+    mutate(
+      milestone_cutoff = quantile(!!sym(value_col), milestone_pctile, na.rm = TRUE) # Calculate using correct milestone given desirability direction
+    ) |> 
+    filter(
+      if_else(desirable_direction == 1, !!sym(value_col) >= milestone_cutoff, !!sym(value_col) <= milestone_cutoff)
+    ) |>
+    summarise(mean_value = mean(!!sym(value_col), na.rm = TRUE), .groups = "drop")
 }
 
+calculate_sdg_cagr_metrics <- function(
+    indicator_data,
+    desirable_direction = 1,
+    target_value = NA,
+    target_year = 2030,
+    baseline_calc_year = 2015,
+    country_col = "country",
+    variable_col = "variable",
+    year_col = "year",
+    value_col = "value"
+) {
+  # First, calculate the CAGR from baseline year to latest hear
+  cagr_data <- indicator_data |> 
+    select(!!sym(country_col), !!sym(variable_col), !!sym(year_col), !!sym(value_col), desirable_direction) |> 
+    filter(! is.na(!!sym(value_col)), ! is.na(!!sym(year_col))) |>
+    group_by(!!sym(country_col)) |> 
+    mutate(
+      baseline_year = min(if_else(!!sym(year_col) >= baseline_calc_year, !!sym(year_col), Inf), na.rm = TRUE),
+      baseline_year = if_else(baseline_year == Inf, NA_real_, baseline_year),
+      baseline_year_value = if_else(!!sym(year_col) == baseline_year, !!sym(value_col), NA_real_),
+      latest_year = max(!!sym(year_col), na.rm = TRUE),
+      latest_year_value = if_else(!!sym(year_col) == latest_year, !!sym(value_col), NA_real_)
+    ) |>
+    # Filter to retain only the relevant rows with baseline and latest year values
+    summarise(
+      baseline_year_value = first(na.omit(baseline_year_value), default = NA_real_),
+      latest_year_value = first(na.omit(latest_year_value), default = NA_real_),
+      baseline_year = first(baseline_year),
+      latest_year = first(latest_year)
+    ) |> 
+    filter(! is.na(baseline_year_value), ! is.na(latest_year_value)) |>
+    rowwise() |> 
+    mutate(
+      cagr_sdg_baseline_to_latest = (latest_year_value / baseline_year_value) ^ (1 / (latest_year - baseline_year)) - 1
+    )
+  
+  # Now, depending on whether there is a target value provided, we take different steps
+  has_target <- ! is.na(target_value)
+  
+  # If we have a target
+  result <- if (has_target) {
+    cagr_data |> 
+      mutate(
+        value_ev = latest_year_value * (1 + cagr_sdg_baseline_to_latest) ^ (target_year - latest_year),
+        ev_target_ratio = (value_ev - baseline_year_value) / (target_value - baseline_year_value),
+        sdg_value = case_when(
+          ev_target_ratio == 0 ~ case_when(
+            desirable_direction == 1 && latest_year_value > target_value ~ "On track",
+            desirable_direction == -1 && latest_year_value < target_value ~ "On track",
+            TRUE ~ "Regression"
+          ),
+          ev_target_ratio >= 0.95 ~ "On track",
+          ev_target_ratio >= 0.5 ~ "Moderate progress",
+          ev_target_ratio >= 0.1 ~ "Marginal progress",
+          ev_target_ratio >= 0 ~ "Stagnation", 
+          ev_target_ratio < 0 ~ "Regression",
+          TRUE ~ NA_character_
+        )
+      )
+  } else {
+    cagr_data |> 
+      mutate(
+        abs_cagr_sdg_baseline_to_latest = abs(cagr_sdg_baseline_to_latest),  # Take absolute value for comparison
+        sdg_value = case_when(
+          abs_cagr_sdg_baseline_to_latest >= 0.02 ~ "On track",
+          abs_cagr_sdg_baseline_to_latest >= 0.0125 ~ "Moderate progress",
+          abs_cagr_sdg_baseline_to_latest >= 0.005 ~ "Marginal progress",
+          abs_cagr_sdg_baseline_to_latest >= 0 ~ "Stagnation",
+          abs_cagr_sdg_baseline_to_latest < 0 ~ "Regression",
+          TRUE ~ NA_character_
+        )
+      ) |> 
+      select(-abs_cagr_sdg_baseline_to_latest)
+  }
+  
+  result |> mutate(
+    sdg_value = if_else(baseline_year == latest_year, NA_character_, sdg_value)
+  )
+}
 
 #' calculate_standardized_distance_metrics
 #'
@@ -389,7 +493,7 @@ calculate_standardized_distance_metrics <- function(
 }
 
 
-#' calculate_velocity_cagr_required_to_hit_target_value_by_target_year
+#' calculate_cagr
 #'
 #' @description Calculates the compound annual growth rate (CAGR) required to reach a target value from a starting value 
 #' over a specified number of years. The result is expressed as a percentage.
@@ -407,7 +511,7 @@ calculate_standardized_distance_metrics <- function(
 #'
 #' @examples
 #' # Example: Calculate the CAGR required to grow from 100 to 200 in 10 years
-#' calculate_velocity_cagr_required_to_hit_target_value_by_target_year(
+#' calculate_cagr(
 #'   starting_value = 100, 
 #'   starting_year = 2020, 
 #'   target_value = 200, 
@@ -415,13 +519,13 @@ calculate_standardized_distance_metrics <- function(
 #' )
 #' 
 #' # Example: When the target year equals the starting year
-#' calculate_velocity_cagr_required_to_hit_target_value_by_target_year(
+#' calculate_cagr(
 #'   starting_value = 100, 
 #'   starting_year = 2020, 
 #'   target_value = 200, 
 #'   target_year = 2020
 #' ) # Returns `Inf`
-calculate_velocity_cagr_required_to_hit_target_value_by_target_year <- function(
+calculate_cagr <- function(
     starting_value,
     starting_year,
     target_value, 
@@ -433,6 +537,7 @@ calculate_velocity_cagr_required_to_hit_target_value_by_target_year <- function(
     100 * ((target_value / starting_value) ^ (1 / (target_year - starting_year)) - 1)
   }
 }
+
 
 #' calculate_velocity_linear_growth_rate_required_to_hit_target_value_by_target_year
 #'
@@ -518,11 +623,15 @@ calculate_velocity_metrics <- function(
   velocity_starting_data <- get_recent_data_values(indicator_data, year_col, country_col, value_col)
   by_year_velocities <- calculate_velocity_required_to_hit_milestone_metrics(velocity_starting_data, indicator_milestone_metrics, target_value, target_year)
   
+  years_contributing <- indicator_data |> 
+    group_by(!!sym(country_col)) |>
+    summarise(years_contributing = n_distinct(!!sym(year_col))) |>
+    rename(country = !!sym(country_col)) 
+    
   by_year_velocities |> 
+    left_join(years_contributing, by = country_col) |>
     group_by(country) |> 
-    filter(year == latest_year) |>
     ungroup() |> 
-    select(-year) |> 
     arrange(country)
 }
 
@@ -559,7 +668,7 @@ calculate_velocity_metrics <- function(
 #'   target_year = 2030
 #' )
 #'
-#' @seealso calculate_velocity_cagr_required_to_hit_target_value_by_target_year, calculate_velocity_linear_growth_rate_required_to_hit_target_value_by_target_year
+#' @seealso calculate_cagr, calculate_velocity_linear_growth_rate_required_to_hit_target_value_by_target_year
 calculate_velocity_required_to_hit_milestone_metrics <- function(
     velocity_starting_data,
     indicator_milestone_metrics,
@@ -568,20 +677,20 @@ calculate_velocity_required_to_hit_milestone_metrics <- function(
 ) {
   # Join starting data with milestone metrics by country
   velocity_starting_data <- velocity_starting_data |> 
-    left_join(indicator_milestone_metrics, by = c("country"))
+    left_join(indicator_milestone_metrics, by = c("country", "latest_year"))
   
   # Calculate velocity metrics
   velocity_starting_data |> 
     rowwise() |> 
     mutate(
       # Using latest_value as starting point
-      from_latest_year_cagr_required_to_hit_milestone_global = calculate_velocity_cagr_required_to_hit_target_value_by_target_year(
+      from_latest_year_cagr_required_to_hit_milestone_global = calculate_cagr(
         latest_value, latest_year, milestone_global, target_year),
-      from_latest_year_cagr_required_to_hit_milestone_region = calculate_velocity_cagr_required_to_hit_target_value_by_target_year(
+      from_latest_year_cagr_required_to_hit_milestone_region = calculate_cagr(
         latest_value, latest_year, milestone_region, target_year),
-      from_latest_year_cagr_required_to_hit_milestone_income_group = calculate_velocity_cagr_required_to_hit_target_value_by_target_year(
+      from_latest_year_cagr_required_to_hit_milestone_income_group = calculate_cagr(
         latest_value, latest_year, milestone_income_group, target_year),
-      from_latest_year_cagr_required_to_hit_target = calculate_velocity_cagr_required_to_hit_target_value_by_target_year(
+      from_latest_year_cagr_required_to_hit_target = calculate_cagr(
         latest_value, latest_year, target_value, target_year),
       
       from_latest_year_linear_growth_rate_required_to_hit_milestone_global = calculate_velocity_linear_growth_rate_required_to_hit_target_value_by_target_year(
@@ -594,13 +703,13 @@ calculate_velocity_required_to_hit_milestone_metrics <- function(
         latest_value, latest_year, target_value, target_year),
       
       # Using avg_value_last_three_years as starting point
-      from_mean_last_3_years_cagr_required_to_hit_milestone_global = calculate_velocity_cagr_required_to_hit_target_value_by_target_year(
+      from_mean_last_3_years_cagr_required_to_hit_milestone_global = calculate_cagr(
         avg_value_last_three_years, latest_year, milestone_global, target_year),
-      from_mean_last_3_years_cagr_required_to_hit_milestone_region = calculate_velocity_cagr_required_to_hit_target_value_by_target_year(
+      from_mean_last_3_years_cagr_required_to_hit_milestone_region = calculate_cagr(
         avg_value_last_three_years, latest_year, milestone_region, target_year),
-      from_mean_last_3_years_cagr_required_to_hit_milestone_income_group = calculate_velocity_cagr_required_to_hit_target_value_by_target_year(
+      from_mean_last_3_years_cagr_required_to_hit_milestone_income_group = calculate_cagr(
         avg_value_last_three_years, latest_year, milestone_income_group, target_year),
-      from_mean_last_3_years_cagr_required_to_hit_target = calculate_velocity_cagr_required_to_hit_target_value_by_target_year(
+      from_mean_last_3_years_cagr_required_to_hit_target = calculate_cagr(
         avg_value_last_three_years, latest_year, target_value, target_year),
       
       from_mean_last_3_years_linear_growth_rate_required_to_hit_milestone_global = calculate_velocity_linear_growth_rate_required_to_hit_target_value_by_target_year(
@@ -762,7 +871,7 @@ extract_target_data <- function(indicator_variable) {
 }
 
 
-#' generate_forest_plots
+#' generate_distance_forest_plots
 #'
 #' @description Generates forest plots for visualizing milestone data by region or income group. 
 #' Each plot displays countries within the specified grouping variable, along with annotations 
@@ -772,6 +881,7 @@ extract_target_data <- function(indicator_variable) {
 #'   including country, region, income group, and the latest year values.
 #' @param milestone_summary A data frame summarizing milestone information for global, regional, 
 #'   and income group milestones.
+#' @param label A character string specifying the topic being analyzed. 
 #' @param unit A character string specifying the unit of measurement for the x-axis. Default is `"Value"`.
 #' @param group_by A character string specifying the grouping variable for the plots. 
 #'   Options are `"region"` or `"income_group"`. Default is `"region"`.
@@ -780,11 +890,11 @@ extract_target_data <- function(indicator_variable) {
 #'
 #' @examples
 #' # Generate forest plots by region
-#' plots_by_region <- generate_forest_plots(indicator_variable_metrics, milestone_summary, unit = "Percentage", group_by = "region")
+#' plots_by_region <- generate_distance_forest_plots(indicator_variable_metrics, milestone_summary, unit = "Percentage", group_by = "region")
 #'
 #' # Generate forest plots by income group
-#' plots_by_income <- generate_forest_plots(indicator_variable_metrics, milestone_summary, unit = "Percentage", group_by = "income_group")
-generate_forest_plots <- function(indicator_variable_metrics, milestone_summary, unit = "Value", group_by = "region") {
+#' plots_by_income <- generate_distance_forest_plots(indicator_variable_metrics, milestone_summary, unit = "Percentage", group_by = "income_group")
+generate_distance_forest_plots <- function(indicator_variable_metrics, milestone_summary, label, unit = "Value", group_by = "region") {
   # Determine grouping variable
   if (group_by == "region") {
     group_prefix <- "Region: "
@@ -818,122 +928,354 @@ generate_forest_plots <- function(indicator_variable_metrics, milestone_summary,
   plots <- list()
   
   # Loop through each group
+  # Debug: group <- 
   for (group in groups) {
-    # Filter data for the group
-    group_data <- indicator_variable_metrics |>
-      filter(!!sym(group_var) == !!group, !is.na(latest_year_value)) |>
-      mutate(
-        country = factor(
-          country,
-          levels = country[order(desirable_direction * latest_year_value)]
+    local({
+      # Filter data for the group
+      group_data <- indicator_variable_metrics |>
+        filter(!!sym(group_var) == !!group, !is.na(latest_year_value)) |>
+        mutate(
+          country = factor(
+            country,
+            levels = country[order(desirable_direction * latest_year_value)]
+          )
         )
-      )
-    
-    # Add milestones as data points
-    global_milestone_value <- milestone_summary |> filter(Group == "Global") |> pull(Milestone)
-    group_milestone_value <- milestone_summary |>
-      filter(str_detect(Group, paste0(group_prefix, group))) |>
-      pull(Milestone)
-    
-    y_milestone_label <- if (group_by == "region") {
-      "Region Milestone"
-    } else {
-      "Income Group Milestone"
-    }
-    
-    milestones_to_summarize <- if(!is.na(target_value)) {
-      c("Target", "Global Milestone", y_milestone_label)
-    } else {
-      c("Global Milestone", y_milestone_label)
-    }
-    
-    latest_year_values <- if(!is.na(target_value)) {
-      c(target_value, global_milestone_value, group_milestone_value)
-    } else {
-      c(global_milestone_value, group_milestone_value)
-    }
-    
-    milestone_data <- tibble(
-      country = milestones_to_summarize,
-      latest_year_value = latest_year_values,
-      desirable_direction = rep(desirable_direction, length(milestones_to_summarize))
-    )
-    
-    # Combine and sort data
-    group_data <- bind_rows(group_data, milestone_data) |>
-      mutate(
-        country = factor(
-          country,
-          levels = unique(country[order(desirable_direction * latest_year_value)])
-        )
-      )
-    
-    # Calculate dynamic x-axis limits with padding
-    x_padding <- diff(range(group_data$latest_year_value, na.rm = TRUE)) * 0.025 # 5% of the range
-                 
-    plot <- ggplot(group_data, aes(x = latest_year_value, y = country)) +
-      ggtitle(group) +
-      geom_segment(aes(x = 0, xend = latest_year_value, y = country, yend = country),
-                   color = "gray90", size = 0.3)
       
-    if(!is.na(target_value)) {
+      # Plot title
+      plot_title <- paste0(label)
+      plot_subtitle <- if (group_by == "region") {
+        paste0("Region: ", group)
+      } else {
+        paste0("Income Group: ", group)
+      }
+      
+      # Add milestones as data points
+      global_milestone_value <- milestone_summary |> filter(Group == "Global") |> pull(Milestone)
+      group_milestone_value <- milestone_summary |>
+        filter(str_detect(Group, paste0(group_prefix, group))) |>
+        pull(Milestone)
+      
+      y_milestone_label <- if (group_by == "region") {
+        "Region Milestone"
+      } else {
+        "Income Group Milestone"
+      }
+      
+      milestones_to_summarize <- if(!is.na(target_value)) {
+        c("Target", "Global Milestone", y_milestone_label)
+      } else {
+        c("Global Milestone", y_milestone_label)
+      }
+      
+      latest_year_values <- if(!is.na(target_value)) {
+        c(target_value, global_milestone_value, group_milestone_value)
+      } else {
+        c(global_milestone_value, group_milestone_value)
+      }
+      
+      milestone_data <- tibble(
+        country = milestones_to_summarize,
+        latest_year_value = latest_year_values,
+        desirable_direction = rep(desirable_direction, length(milestones_to_summarize))
+      )
+      
+      # Combine and sort data
+      group_data <- bind_rows(group_data, milestone_data) |>
+        mutate(
+          country = factor(
+            country,
+            levels = unique(country[order(desirable_direction * latest_year_value)])
+          )
+        )
+      
+      # Calculate dynamic x-axis limits with padding
+      x_padding <- diff(range(group_data$latest_year_value, na.rm = TRUE)) * 0.025 * sign(mean(group_data$latest_year_value, na.rm = TRUE))
+                   
+      plot <- ggplot(group_data, aes(x = latest_year_value, y = country)) +
+        # ggtitle(plot_title) +
+  
+        geom_segment(aes(x = 0, xend = latest_year_value, y = country, yend = country,
+                         color = case_when(
+                           str_starts(country, "Global") ~ "blue",
+                           str_starts(country, y_milestone_label) ~ "red",
+                           str_starts(country, "Target") ~ "darkgreen",
+                           TRUE ~ "gray90"
+                         )),
+                     linewidth = 0.3)
+        
+      if(!is.na(target_value)) {
+        plot <- plot + annotate(
+          "text",
+          x = target_value + x_padding, 
+          y = "Target",
+          label = paste0(round(target_value, 1)),
+          color = "darkgreen",
+          hjust = 0,
+          size = 3.5
+        )
+      }
+        
       plot <- plot + annotate(
-        "text",
-        x = target_value + x_padding, 
-        y = "Target",
-        label = paste0(round(target_value, 1)),
-        color = "darkgreen",
-        hjust = 0,
-        size = 3.5
-      )
-    }
-      
-    plot <- plot + annotate(
-        "text",
-        x = global_milestone_value + x_padding, 
-        y = "Global Milestone",
-        label = paste0(round(global_milestone_value, 1)),
-        color = "blue",
-        hjust = 0,
-        size = 3.5
-      ) +
-      annotate(
-        "text",
-        x = group_milestone_value + x_padding, # Add dynamic padding
-        y = paste0(y_milestone_label),
-        label = paste0(round(group_milestone_value, 1)),
-        color = "red",
-        hjust = 0,
-        size = 3.5
-      ) +
-      geom_point(aes(color = case_when(
-        str_starts(country, "Global") ~ "blue",
-        str_starts(country, y_milestone_label) ~ "red",
-        str_starts(country, "Target") ~ "darkgreen",
-        TRUE ~ "gray"
-      )), size = 3) +
-      scale_x_continuous(expand = expansion(mult = c(0.05, 0.1))) +
-      scale_y_discrete(labels = function(x) {
-        case_when(
-          str_starts(x, "Global") ~ paste0("**<span style='color:blue;'>", x, "</span>**"),
-          str_starts(x, y_milestone_label) ~ paste0("**<span style='color:red;'>", x, "</span>**"),
-          str_starts(x, "Target") ~ paste0("**<span style='color:darkgreen;'>", x, "</span>**"),
-          TRUE ~ x
+          "text",
+          x = global_milestone_value + x_padding, 
+          y = "Global Milestone",
+          label = paste0(round(global_milestone_value, 1)),
+          color = "blue",
+          hjust = 0,
+          size = 3.5
+        ) +
+        annotate(
+          "text",
+          x = group_milestone_value + x_padding, # Add dynamic padding
+          y = paste0(y_milestone_label),
+          label = paste0(round(group_milestone_value, 1)),
+          color = "red",
+          hjust = 0,
+          size = 3.5
+        ) +
+        geom_point(aes(color = case_when(
+          str_starts(country, "Global") ~ "blue",
+          str_starts(country, y_milestone_label) ~ "red",
+          str_starts(country, "Target") ~ "darkgreen",
+          TRUE ~ "gray"
+        )), size = 3) +
+        scale_x_continuous(expand = expansion(mult = c(0.05, 0.1))) +
+        scale_y_discrete(labels = function(x) {
+          case_when(
+            str_starts(x, "Global") ~ paste0("**<span style='color:blue;'>", x, "</span>**"),
+            str_starts(x, y_milestone_label) ~ paste0("**<span style='color:red;'>", x, "</span>**"),
+            str_starts(x, "Target") ~ paste0("**<span style='color:darkgreen;'>", x, "</span>**"),
+            TRUE ~ x
+          )
+        }) +
+        scale_color_identity(guide = "none") +
+        labs(
+          title = plot_title,
+          subtitle = plot_subtitle,
+          x = unit, 
+          y = "Country"
+        ) +
+        theme_minimal() +
+        theme(
+          axis.text.y = element_markdown(size = 10),
+          axis.text.x = element_text(size = 10),
+          panel.grid.major.y = element_blank(),
+          panel.grid.minor.y = element_blank(),
+          plot.title = element_text(face = "bold", size = 14)
         )
-      }) +
-      scale_color_identity(guide = "none") +
-      labs(x = unit, y = "Country") +
-      theme_minimal() +
-      theme(
-        axis.text.y = element_markdown(size = 10),
-        axis.text.x = element_text(size = 10),
-        panel.grid.major.y = element_blank(),
-        panel.grid.minor.y = element_blank(),
-        plot.title = element_text(face = "bold", size = 14)
+      
+      # Add the plot to the list
+      plots[[group]] <<- plot
+    })
+  }
+  
+  plots
+}
+
+
+# Debug
+# milestone = "global_milestone"
+# milestone = "region_milestone"
+# milestone = "income_group_milestone"
+# group_by = "income_group"
+# group_by = "region"
+# 
+# unit = indicator_unit
+# label = indicator_label
+# group_by = "region"
+# milestone = "global_target"
+# velocity_metric="cagr"
+generate_velocity_plots <- function(indicator_variable_metrics, velocity_summary, label, unit = "Value", milestone = "global_target", group_by = "region", velocity_metric="cagr") {
+  # Determine grouping variable
+  if (group_by == "region") {
+    group_prefix <- "Region: "
+    group_var <- "region"
+  } else if (group_by == "income_group") {
+    group_prefix <- "Income Group: "
+    group_var <- "income_group"
+  } else {
+    stop("Invalid group_by value. Use 'region' or 'income_group'.")
+  }
+  
+  if(velocity_metric %in% c("cagr", "linear_growth")) {
+    velocity_data <- velocity_summary[[velocity_metric]]
+  } else {
+    stop("Invalid velocity_metric value. Use 'cagr' or 'linear_growth'")
+  }
+  
+  if(!milestone %in% c("global_target", "global_milestone", "region_milestone", "income_group_milestone")) {
+    stop("Invalid milestone value. Use 'global_target', 'global_milestone', 'region_milestone', or 'income_group_milestone'")
+  }
+  
+  # Extract groups
+  groups <- velocity_data |>
+    filter(str_detect(Group, group_prefix)) |>
+    mutate(group = str_remove(Group, group_prefix)) |>
+    pull(group)
+  
+  # Initialize plots list
+  plots <- list()
+  
+  # Loop through each group
+  # Debug:
+  # label = indicator_label
+  # unit = indicator_unit
+  # group <- groups[1]
+  for (group in groups) {
+    local({
+      # Filter data for the group
+      group_data <- indicator_variable_metrics |>
+        filter(!!sym(group_var) == !!group, !is.na(latest_year_value)) |>
+        mutate(
+          country = factor(
+            country,
+            levels = country[order(desirable_direction * latest_year_value)]
+          )
+        )
+      
+      # Milestone info
+      metric_value <- velocity_data |> 
+        filter(case_when(
+          milestone == "global_target" ~ Group == "Target",
+          milestone == "global_milestone" ~ Group == "Global",
+          milestone == "region_milestone" ~ str_detect(Group, paste0("Region: ", group)),
+          TRUE ~ str_detect(Group, paste0("Income Group: ", group))
+        )) |> 
+        pull(Milestone)
+     
+      metric_label <- case_when(
+        milestone == "global_target" ~ "Global Target",
+        milestone == "global_milestone" ~ "Global Milestone",
+        milestone == "region_milestone" ~ "Region Milestone",
+        milestone == "income_group_milestone" ~ "Income Group Milestone"
       )
-    
-    # Add the plot to the list
-    plots[[group]] <- plot
+      
+      metric_label_title <- case_when(
+        milestone == "global_target" ~ paste0(metric_label, " (", metric_value, "", unit, ")"),
+        milestone == "global_milestone" ~ paste0(metric_label, " (",metric_value,  "", unit, ")"),
+        milestone == "region_milestone" ~ paste0(metric_label, " (", metric_value,  "", unit, ")"),
+        milestone == "income_group_milestone" ~ paste0(metric_label, " (", metric_value,  "", unit, ")"),
+      )
+      
+      # Plot titles
+      plot_title <- paste0("CAGR Required To Reach ", metric_label, " by Country")
+      
+      plot_subtitle <- if (group_by == "region") {
+        paste0("Region: ", group)
+      } else {
+        paste0("Income Group: ", group)
+      }
+      
+      y_milestone_label <- metric_label_title
+  
+      group_data <- group_data |> 
+        mutate(cagr = case_when(
+          milestone == "global_target" ~ from_latest_year_cagr_required_to_hit_target,
+          milestone == "global_milestone" ~ from_latest_year_cagr_required_to_hit_milestone_global,
+          milestone == "region_milestone" ~ from_latest_year_cagr_required_to_hit_milestone_region,
+          TRUE ~ from_latest_year_cagr_required_to_hit_milestone_income_group
+        )) |> 
+        filter(!is.na(cagr)) |>
+        select(country, cagr)
+      
+      
+      metric_global_avg <- velocity_data |> 
+        filter(case_when(
+          milestone == "global_target" ~ Group == "Target",
+          TRUE ~ Group == "Global"
+        )) |> 
+        pull(`Avg Growth Rate Required (From Latest Value)`) |> 
+        as.numeric()
+      
+      metric_group_avg <- group_data  |> pull(cagr) |> mean() |> as.numeric()
+      
+      global_average_label <- "Average (Global)"
+      group_average_label <- paste0("Average (", group, ")")
+      
+      global_avg_data <- tibble(
+        country = global_average_label,
+        cagr = metric_global_avg
+      )
+      
+      group_avg_data <- tibble(
+        country = group_average_label,
+        cagr = metric_group_avg
+      )
+      
+      group_data <- bind_rows(global_avg_data, group_avg_data, group_data) |> 
+      mutate(
+        country = factor(
+          country,
+          levels = unique(country[order(cagr)])
+        )
+      )
+      
+      global_x_padding <- ifelse(metric_global_avg < 0, -20, 5)
+      group_x_padding <- ifelse(metric_group_avg < 0, -20, 5)
+      
+      plot <- 
+        ggplot(group_data, aes(x = cagr, y = country)) +
+        
+        # Line segments colored based on the label
+        geom_segment(aes(x = 0, xend = cagr, y = country, yend = country,
+                         color = case_when(
+                           .data$country == global_average_label ~ "blue",
+                           .data$country == group_average_label ~ "red",
+                           TRUE ~ "gray"
+                         )),
+                     linewidth = 0.3) +
+        
+        # Points colored for global and group averages
+        geom_point(aes(color = case_when(
+          .data$country == global_average_label ~ "blue",
+          .data$country == group_average_label ~ "red",
+          TRUE ~ "gray"
+        )), size = 3) +
+        
+        # Annotation for Global Average
+        geom_text(data = group_data %>% filter(country == global_average_label),
+                  aes(x = cagr + global_x_padding, y = country, label = paste0(formatC(metric_global_avg, format="f", digits=1), '%')),
+                  color = "blue", hjust = 0, size = 3.5) +
+        
+        # Annotation for Group Average
+        geom_text(data = group_data %>% filter(country == group_average_label),
+                  aes(x = cagr + group_x_padding, y = country, label = paste0(formatC(metric_group_avg, format="f", digits=1), '%')),
+                  color = "red", hjust = 0, size = 3.5) +
+        
+        scale_color_identity(guide = "none") +
+        
+        # Color the y-axis labels for both averages
+        scale_y_discrete(labels = function(y) {
+          ifelse(y == global_average_label, paste0("<span style='color:blue;'><strong>", y, "</strong></span>"),
+                 ifelse(y == group_average_label, paste0("<span style='color:red;'><strong>", y, "</strong></span>"), y))
+        }) +
+        
+        labs(
+          title = str_wrap(plot_title, width = 50) %>% gsub("\n", " \n", .),
+          subtitle = plot_subtitle,
+          x = paste0("CAGR from Latest Data Point to ", metric_label),
+          y = element_blank()
+        ) +
+
+        scale_x_continuous(limits = c(
+          min(0, min(group_data$cagr)) - ifelse(min(0, min(group_data$cagr)) < -10, 38, 18),
+          max(100, max(group_data$cagr)) + 20
+          ),
+          labels = function(x) paste0(x, "%") 
+        ) +
+        
+        theme_minimal() +
+        theme(
+          axis.text.y = element_markdown(size = 10),  # Enable markdown to render colored text
+          axis.text.x = element_text(size = 10),
+          panel.grid.major.y = element_blank(),
+          panel.grid.minor.y = element_blank(),
+          plot.title = element_text(face = "bold", size = 14)
+        )
+        
+      # Add the plot to the list
+      plots[[group]] <<- plot
+    })
   }
   
   plots
@@ -982,7 +1324,7 @@ get_analysis_data <- function(raw_analysis_data) {
       milestone_pctile = if_else(desirable_direction == -1, 0.2, 0.8)
     ) |> 
     select(
-      country, ISO3, variable, indicator, short_label, year, value, un_continental_region, income_group, desirable_direction, milestone_pctile, weight
+      country, ISO3, variable, indicator, short_label, year, value, un_continental_region, income_group, desirable_direction, milestone_pctile, weight, unit
     )
 }
 
@@ -1277,14 +1619,25 @@ get_indicator_variable_metrics <- function(
 ) {
   # Debug:
   # indicator_variable <- "safeh20"
+  # indicator_variable <- "childlabor"
+  # indicator_variable <- "emint_cerealsnorice"
+  # indicator_variable <- "aginGDP"
+  # indicator_variable <- "agwaterdraw"
+  # indicator_variable <- "accountability"
   region_col <- get_region_col(analysis_data)
   income_group_col <- get_income_group_col(analysis_data)
   weight_col <- get_weight_col()
   indicator_variable_metrics <- tibble()
+  indicator_standardized_distance_metrics <- tibble()
   milestone_summary <- tibble()
   velocity_summary <- tibble()
-  region_plots <- NA
-  income_group_plots <- NA
+  sdg_summary <- tibble()
+  distance_region_plots <- NA
+  distance_income_group_plots <- NA
+  velocity_global_target_plots <- NA
+  velocity_global_milestone_plots <- NA
+  velocity_region_milestone_plots <- NA
+  velocity_income_group_milestone_plots <- NA
   
   indicator_summary_data <- indicator_summary |> filter(variable == indicator_variable)
   failing_variables <- list()
@@ -1294,6 +1647,8 @@ get_indicator_variable_metrics <- function(
   data_type <- indicator_summary |> filter(variable == indicator_variable) |> pull(data_type)
   indicator_label <- analysis_data |> filter(variable == indicator_variable) |> pull(indicator) |> unique() |> as.character()
   indicator_short_label <- analysis_data |> filter(variable == indicator_variable) |> pull(short_label) |> unique() |> as.character()
+  indicator_unit <- analysis_data |> filter(variable == indicator_variable) |> pull(unit) |> unique() |> as.character()
+  desirable_direction <- analysis_data |> filter(variable == indicator_variable) |> pull(desirable_direction) |> unique() |> as.numeric()
   
   if(length(data_type) == 0 || data_type != "numeric") {
     message <- paste0("Skipped: indicator variable ", indicator_variable, " is not numeric.")
@@ -1302,18 +1657,19 @@ get_indicator_variable_metrics <- function(
       {
         indicator_data <- extract_indicator_data(analysis_data, indicator_variable, data_patches = data_patches)
         target_value <- get_target_value(indicator_variable, target_data)
-        indicator_milestone_metrics <- calculate_milestone_metrics(indicator_data) # All years for milestones
+        
+        indicator_milestone_metrics <- calculate_milestone_metrics(indicator_data)
         indicator_distance_metrics <- calculate_distance_metrics(indicator_data, indicator_milestone_metrics, target_value)
         indicator_standardized_distance_metrics <- calculate_standardized_distance_metrics(indicator_data, region_col, income_group_col, weight_col)
         indicator_velocity_metrics <- calculate_velocity_metrics(indicator_data, indicator_milestone_metrics, target_value, target_year)
+        indicator_sdg_cagr_metrics <- calculate_sdg_cagr_metrics(indicator_data, desirable_direction, target_value, target_year, baseline_calc_year=2015)
         
         indicator_metrics_countries_with_data <- indicator_milestone_metrics |> 
           mutate(
             target_value = target_value
           ) |> 
-          inner_join(indicator_distance_metrics, by = c("variable", "country", c("year" = "latest_year"))) |>  # Narrows to latest year 
+          inner_join(indicator_distance_metrics, by = c("variable", "country", "latest_year")) |>  # Narrows to latest year 
           rename(
-            latest_year = year,
             latest_year_value = value,
           ) |> 
           select(variable, country, latest_year, latest_year_value, everything()) |> # Rearrange
@@ -1340,23 +1696,50 @@ get_indicator_variable_metrics <- function(
           ) |>
           unique()
 
+        indicator_sdg_cagr_metrics_to_merge <- indicator_sdg_cagr_metrics |>
+          rename(
+            sdg_baseline_year = baseline_year,
+            sdg_baseline_value = baseline_year_value,
+            sdg_latest_year = latest_year,
+            sdg_latest_value = latest_year_value,
+            sdg_cagr = cagr_sdg_baseline_to_latest,
+            sdg_rating = sdg_value
+          ) 
+        
         indicator_variable_metrics <- indicator_metrics_countries_with_data |> 
+          mutate(unit = indicator_unit) |>
           bind_rows(countries_without_data) |> 
-          left_join(country_region_income_group, by = "country") |>
-          select(variable, country, ISO3,  desirable_direction, milestone_pctile, region, income_group, everything()) |>
+          left_join(country_region_income_group, by = "country") |> 
+          left_join(indicator_sdg_cagr_metrics_to_merge, by = c("country")) |> 
+          select(variable, country, ISO3,  desirable_direction, unit, milestone_pctile, region, income_group, everything()) |>
           arrange(country)
 
         # Get summaries of these metrics by global, region, income group
-        milestone_summary <- get_summary_milestones(indicator_variable_metrics, target_value, region_col, income_group_col)
-        velocity_summary <- get_summary_velocities(indicator_variable_metrics, target_value, region_col, income_group_col)
-
+        milestone_summary <- get_summary_milestones(indicator_variable_metrics, indicator_unit, target_value, region_col, income_group_col)
+        velocity_summary <- get_summary_velocities(indicator_variable_metrics, indicator_unit, target_value, region_col, income_group_col)
+        sdg_summary <- get_summary_sdg(indicator_variable_metrics)
+        
         # Visualize: this will be extracted
         # Prepare the data
-        region_plots <- generate_forest_plots(indicator_variable_metrics, milestone_summary, unit = indicator_label, group_by = "region")
-        income_group_plots <- generate_forest_plots(indicator_variable_metrics, milestone_summary, unit = indicator_label, group_by = "income_group")
+        distance_region_plots <- generate_distance_forest_plots(indicator_variable_metrics, milestone_summary, label = indicator_label, unit = indicator_unit, group_by = "region")
+        distance_income_group_plots <- generate_distance_forest_plots(indicator_variable_metrics, milestone_summary, label = indicator_label, unit = indicator_unit, group_by = "income_group")
         
-        save_forest_plots(region_plots, indicator_variable, "region")
-        save_forest_plots(income_group_plots, indicator_variable, "income_group")
+        # velocity viz
+        velocity_global_target_plots <- if(!is.na(target_value)) {
+          generate_velocity_plots(indicator_variable_metrics, velocity_summary, label = indicator_label, unit = indicator_unit, milestone = "global_target", group_by = "region", velocity_metric="cagr")
+        } else {
+          NULL
+        }
+        velocity_global_milestone_plots <- generate_velocity_plots(indicator_variable_metrics, velocity_summary, label = indicator_label, unit = indicator_unit, milestone = "global_milestone", group_by = "region", velocity_metric="cagr")
+        velocity_region_milestone_plots <- generate_velocity_plots(indicator_variable_metrics, velocity_summary, label = indicator_label, unit = indicator_unit, milestone = "region_milestone", group_by = "region", velocity_metric="cagr")
+        velocity_income_group_milestone_plots <- generate_velocity_plots(indicator_variable_metrics, velocity_summary, label = indicator_label, unit = indicator_unit, milestone = "income_group_milestone", group_by = "income_group", velocity_metric="cagr")
+        
+        save_forest_plots(distance_region_plots, indicator_variable, "region")
+        save_forest_plots(distance_income_group_plots, indicator_variable, "income_group")
+        save_forest_plots(velocity_global_target_plots, indicator_variable, "global_target")
+        save_forest_plots(velocity_global_milestone_plots, indicator_variable, "global_milestone")
+        save_forest_plots(velocity_region_milestone_plots, indicator_variable, "region_milestone")
+        save_forest_plots(velocity_income_group_milestone_plots, indicator_variable, "income_group_milestone")
         
         message <- "Indicator variable successfully processed."
       },
@@ -1368,6 +1751,8 @@ get_indicator_variable_metrics <- function(
       error = function(e) {
         failing_variables <- c(failing_variables, indicator_variable)
         cat(paste0("💣 Error processing ", indicator_variable, ": ", e$message, "\n\n"))
+        print(e)
+        
         message <- "Failed to process indicator variable."
       }
     )  
@@ -1380,17 +1765,28 @@ get_indicator_variable_metrics <- function(
     message = message,
     data = indicator_variable_metrics,
     visualizations = list(
-      region = region_plots,
-      income_group = income_group_plots
+      distance = list(
+        region = distance_region_plots,
+        income_group = distance_income_group_plots
+      ),
+      velocity = list(
+        global_target = velocity_global_target_plots,
+        global_milestone = velocity_global_milestone_plots,
+        region_milestone = velocity_region_milestone_plots,
+        income_group_milestone = velocity_income_group_milestone_plots
+      )
     ),
     summaries = list(
       indicators = indicator_summary_data,
       milestones = milestone_summary,
-      velocities = velocity_summary
+      velocities = velocity_summary,
+      sdg = sdg_summary
     ),
     standardized_distance_metrics = indicator_standardized_distance_metrics,
     meta = list(
       data_type = data_type,
+      indicator_unit = indicator_unit,
+      desirable_direction = desirable_direction,
       milestone_summary = milestone_summary,
       variable = indicator_variable,
       failing = length(failing_variables) > 0,
@@ -1479,7 +1875,8 @@ get_metrics_data <- function(
         indicator_summary,
         target_data,
         .x,
-        target_year, data_patches
+        target_year,
+        data_patches
     )
   ) |> 
     set_names(indicator_variables)
@@ -1652,6 +2049,7 @@ get_regions <- function(data) {
 #'
 #' @param indicator_variable_metrics A data frame containing metrics for an indicator, including milestone columns 
 #'   (`milestone_global`, `milestone_region`, `milestone_income_group`).
+#' @param indicator_unit The unit of the indicator (e.g., "USD", "people", "percent").
 #' @param target_value The target value for the indicator.
 #' @param region_col The column name representing the region.
 #' @param income_group_col The column name representing the income group.
@@ -1667,9 +2065,9 @@ get_regions <- function(data) {
 #'   region_col = "region",
 #'   income_group_col = "income_group"
 #' )
-get_summary_milestones <- function(indicator_variable_metrics, target_value = NA, region_col = "un_continental_group", income_group_col = "income_group") {
+get_summary_milestones <- function(indicator_variable_metrics, indicator_unit, target_value = NA, region_col = "un_continental_group", income_group_col = "income_group") {
   milestone_summaries <- get_milestone_summaries_from_indicator_variable_metrics(indicator_variable_metrics, target_value)
-  
+    
   global_milestone <- milestone_summaries$global
   region_milestones <- milestone_summaries$region
   income_group_milestones <- milestone_summaries$income_group
@@ -1818,6 +2216,7 @@ get_summary_milestones <- function(indicator_variable_metrics, target_value = NA
    ) |> 
    mutate(
      Milestone = round(Milestone, 2),
+     Unit = indicator_unit,
      avg_values_latest_year = round(avg_values_latest_year, 2),
      avg_distance = round(avg_distance, 2),
      missing_pct = round(100 * countries_missing / countries_total, 1),
@@ -1832,6 +2231,30 @@ get_summary_milestones <- function(indicator_variable_metrics, target_value = NA
    )
 }
 
+get_summary_sdg <- function(indicator_variable_metrics, cagr_version = "latest") {
+  desired_order <- c("On track", "Moderate progress", "Marginal progress", "Stagnation", "Regression")
+  
+  indicator_variable_metrics |> 
+    mutate(
+      sdg_rating = factor(sdg_rating, levels = desired_order),
+      sdg_rating = replace_na(as.character(sdg_rating), "No data") 
+    ) |>
+    group_by(sdg_rating) |> 
+    summarize(
+      n = n(),
+      .groups = "drop"
+    ) |> 
+    complete(
+      sdg_rating = desired_order, fill = list(n = 0)
+    ) |> 
+    arrange(factor(sdg_rating, levels = desired_order)) |> 
+    rename(
+      `SDG Progress Assessment` = sdg_rating,
+      `Count` = n
+    )
+  
+}
+
 
 #' get_summary_velocities
 #'
@@ -1839,6 +2262,7 @@ get_summary_milestones <- function(indicator_variable_metrics, target_value = NA
 #' regional, and income group milestones based on indicator metrics.
 #'
 #' @param indicator_variable_metrics A data frame containing metrics for an indicator, including milestone and velocity values.
+#' @param indicator_unit The unit of the indicator (e.g., "USD").
 #' @param target_value (Optional) A numeric value representing the target to include in the velocity summaries. Default is `NA`.
 #' @param region_col The column name representing the region grouping (default: "un_continental_group").
 #' @param income_group_col The column name representing the income group grouping (default: "income_group").
@@ -1863,15 +2287,15 @@ get_summary_milestones <- function(indicator_variable_metrics, target_value = NA
 #'   region_col = "region",
 #'   income_group_col = "income_group"
 #' )
-get_summary_velocities <- function(indicator_variable_metrics, target_value = NA, region_col = "un_continental_group", income_group_col = "income_group") {
+get_summary_velocities <- function(indicator_variable_metrics, indicator_unit, target_value = NA, region_col = "un_continental_group", income_group_col = "income_group") {
   milestone_summaries <- get_milestone_summaries_from_indicator_variable_metrics(indicator_variable_metrics, target_value)
   
   global_milestone <- milestone_summaries$global
   region_milestones <- milestone_summaries$region
   income_group_milestones <- milestone_summaries$income_group
   
-  cagr_summaries <- get_velocity_summary_data(indicator_variable_metrics, milestone_summaries, "cagr")
-  linear_growth_summaries <- get_velocity_summary_data(indicator_variable_metrics, milestone_summaries, "linear")
+  cagr_summaries <- get_velocity_summary_data(indicator_variable_metrics, indicator_unit, milestone_summaries, "cagr")
+  linear_growth_summaries <- get_velocity_summary_data(indicator_variable_metrics, indicator_unit, milestone_summaries, "linear")
   
   list(
     cagr = cagr_summaries,
@@ -1971,6 +2395,7 @@ get_un_regions <- function(data) {
 #' region, and income group milestones.
 #'
 #' @param indicator_variable_metrics A data frame containing metrics for an indicator, including milestone values.
+#' @param indicator_unit A character string specifying the unit of the indicator.
 #' @param milestone_summaries A list of milestone summaries, including global, region, and income group milestones.
 #' @param growth_type A character string indicating the type of growth metric to calculate. Options are "cagr" or "linear".
 #'
@@ -1989,7 +2414,7 @@ get_un_regions <- function(data) {
 #'   milestone_summaries,
 #'   growth_type = "cagr"
 #' )
-get_velocity_summary_data <- function(indicator_variable_metrics, milestone_summaries, growth_type = "cagr") {
+get_velocity_summary_data <- function(indicator_variable_metrics,  indicator_unit, milestone_summaries, growth_type = "cagr") {
   if (!growth_type %in% c("cagr", "linear")) {
     stop("Invalid growth_type. Options are 'cagr' or 'linear'.")
   }
@@ -2157,6 +2582,7 @@ get_velocity_summary_data <- function(indicator_variable_metrics, milestone_summ
   bind_rows(target_data, global_data, region_data, income_group_data) |> 
     mutate(
       `Milestone` = round(`Milestone`, 2),
+      `Unit` = indicator_unit,
       `Avg Latest Value` = round(`Avg Latest Value`, 2),
       `Avg Growth Rate Required (From Latest Value)` = round(`Avg Growth Rate Required (From Latest Value)`, 2),
       `Avg Latest Value (3-Year Avg)` = round(`Avg Latest Value (3-Year Avg)`, 2),
